@@ -38,7 +38,7 @@ fn song(seed: u64, secs: f32) -> Vec<f32> {
     x
 }
 
-fn build() -> (Arc<Catalog>, Vec<Vec<f32>>) {
+fn build(name: &str) -> (Arc<Catalog>, Vec<Vec<f32>>) {
     let p = FpParams::default();
     let fp = Fingerprinter::new(p);
     let mut b = CatalogBuilder::new(p);
@@ -54,7 +54,8 @@ fn build() -> (Arc<Catalog>, Vec<Vec<f32>>) {
         };
         b.add_song(&m, &fp.hashes(s), Some(&lrc), Some(b"fakeimg"));
     }
-    let path = std::env::temp_dir().join(format!("reis_test_{}.reis", std::process::id()));
+    // one file per test: tests run in parallel
+    let path = std::env::temp_dir().join(format!("reis_test_{}_{name}.reis", std::process::id()));
     std::fs::write(&path, b.write()).unwrap();
     let cat = Arc::new(Catalog::open(path.to_str().unwrap()).unwrap());
     (cat, songs)
@@ -62,7 +63,7 @@ fn build() -> (Arc<Catalog>, Vec<Vec<f32>>) {
 
 #[test]
 fn one_shot_offset() {
-    let (cat, songs) = build();
+    let (cat, songs) = build("one_shot");
     let d = EngineConfig::default();
     let fp = Fingerprinter::new(cat.params.query(d.query_density, d.query_fanout));
     let start = 13.37;
@@ -80,7 +81,7 @@ fn one_shot_offset() {
 
 #[test]
 fn engine_locks_and_tracks() {
-    let (cat, songs) = build();
+    let (cat, songs) = build("engine");
     let mut e = Engine::new(cat.clone(), EngineConfig::default());
     let start = 6.0f64;
     let chunk = 160usize; // 20 ms
