@@ -155,7 +155,7 @@ class ReisEngine {
       _cap = n;
       _buf = calloc<Int16>(_cap);
     }
-    _buf.asTypedList(n).setAll(0, bytes.buffer.asInt16List(bytes.offsetInBytes, n));
+    _buf.cast<Uint8>().asTypedList(n * 2).setAll(0, bytes.sublist(0, n * 2)); // copy bytes: no alignment assumption
     _engPush(ptr, _buf, n ~/ channels, channels, rate, clockEndMs);
   }
 
