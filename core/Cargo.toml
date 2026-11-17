@@ -1,0 +1,13 @@
+[package]
+name = "reis-core"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Offline music recognition core: landmark fingerprinting, compact index, synced lyrics"
+
+[lib]
+crate-type = ["rlib", "cdylib", "staticlib"]
+
+# Deliberately zero dependencies: small binary, trivial cross-compilation
+# (Android NDK / iOS), nothing to audit.
+[dependencies]

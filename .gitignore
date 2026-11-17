@@ -1,0 +1,12 @@
+/target
+/bench-work
+*.reis
+app/flutter/.dart_tool/
+app/flutter/build/
+app/flutter/android/
+app/flutter/ios/
+app/flutter/linux/
+app/flutter/windows/
+app/flutter/macos/
+app/flutter/pubspec.lock
+__pycache__/
