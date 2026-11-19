@@ -1,0 +1,46 @@
+name: export-models
+# Converts pre-trained PyTorch checkpoints to Reis' framework-free .rnm format,
+# with reference outputs, and publishes them as the `models-v1` release.
+on:
+  push:
+    branches: [main]
+    paths: ["tools/models/**", ".github/workflows/models.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: Export
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p models-out
+          {
+            pip install --quiet torch torchaudio torchvision --index-url https://download.pytorch.org/whl/cpu
+            pip install --quiet numpy
+            git clone --depth 1 https://github.com/fschmid56/EfficientAT /tmp/EfficientAT
+            cd /tmp/EfficientAT
+            for m in mn04_as mn10_as; do python "$GITHUB_WORKSPACE/tools/models/export_efficientat.py" $m "$GITHUB_WORKSPACE/models-out"; done
+          } 2>&1 | tee models-out/export.log
+          ls -la models-out
+      - name: Publish
+        shell: bash
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          gh release view models-v1 >/dev/null 2>&1 || gh release create models-v1 --prerelease --title "Reis models v1" \
+            --notes "Pre-trained neural models converted to the .rnm format (see tools/models/). EfficientAT weights: MIT licence, trained on AudioSet."
+          gh release upload models-v1 models-out/* --clobber
+      - name: Publish logs on failure
+        if: failure()
+        shell: bash
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          gh release view ci-logs >/dev/null 2>&1 || gh release create ci-logs --prerelease --title "ci-logs" --notes "Build logs of failed CI runs"
+          gh release upload ci-logs models-out/export.log --clobber

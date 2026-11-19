@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+    paths-ignore: ["tools/models/**", ".github/workflows/models.yml", "docs/**", "**.md"]
   workflow_dispatch:
 
 permissions:
