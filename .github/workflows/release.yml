@@ -103,7 +103,8 @@ jobs:
           for os in linux-x86_64 windows-x64; do
             exe=dist/reis-cli-${VERSION}-$os; [ -f "$exe" ] || exe="$exe.exe"
             b=reis-cli-${VERSION}-$os; mkdir -p "$b/models"
-            cp "$exe" "$b/"; cp models/*.rnm "$b/models/"; cp README.md LICENSE-MIT "$b/"
+            if [ "$os" = windows-x64 ]; then cp "$exe" "$b/reis.exe"; else cp "$exe" "$b/reis"; chmod +x "$b/reis"; fi
+            cp models/*.rnm "$b/models/"; cp README.md LICENSE-MIT "$b/"
             if [ "$os" = windows-x64 ]; then (cd "$b" && zip -qr "../dist/$b.zip" .); else tar czf "dist/$b.tar.gz" "$b"; fi
             rm "$exe"
           done
