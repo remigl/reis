@@ -24,7 +24,7 @@ jobs:
         with: { channel: stable, cache: true }
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,x86_64-unknown-linux-musl
       - name: Build (core, CLI, APK)
         shell: bash
         run: |
@@ -33,6 +33,9 @@ jobs:
           {
             cargo test --release
             cargo build --release
+            # static Linux CLI: runs on any distribution (no glibc version requirement)
+            sudo apt-get install -y -qq musl-tools
+            cargo build --release -p reis-cli --target x86_64-unknown-linux-musl
             cargo install cargo-ndk --locked
             PLATFORMS=android bash scripts/setup_flutter.sh
             bash scripts/build_android.sh
@@ -43,7 +46,7 @@ jobs:
           } 2>&1 | tee build-android.log
           mkdir -p dist
           cp app/flutter/build/app/outputs/flutter-apk/app-release.apk "dist/reis-${VERSION}-android.apk"
-          cp target/release/reis "dist/reis-cli-${VERSION}-linux-x86_64"
+          cp target/x86_64-unknown-linux-musl/release/reis "dist/reis-cli-${VERSION}-linux-x86_64"
           cp target/release/libreis_core.so "dist/libreis_core-${VERSION}-linux-x86_64.so"
       - uses: actions/upload-artifact@v4
         with: { name: android, path: dist/* }
