@@ -319,3 +319,57 @@ mod tests {
         assert_eq!(o, [3.0, 3.0, 3.0, 5.0, 5.0, 5.0]);
     }
 }
+
+impl FpParams {
+    /// Little-endian u32 serialization (stored with every index so it is never
+    /// queried with different parameters).
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let p = self;
+        let mut out = Vec::new();
+        for v in [
+            p.sample_rate,
+            p.n_fft as u32,
+            p.hop as u32,
+            p.bin_lo as u32,
+            p.bin_hi as u32,
+            p.nb_f as u32,
+            p.nb_t as u32,
+            p.peaks_per_sec.to_bits(),
+            p.fanout as u32,
+            p.dt_min,
+            p.dt_max,
+            p.df_max as u32,
+            p.min_prominence_db.to_bits(),
+            p.whiten_w as u32,
+            p.rank_raw as u32,
+            p.q_f,
+            p.q_t,
+        ] {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        out
+    }
+    pub const BYTES: usize = 17 * 4;
+    pub fn from_bytes(b: &[u8]) -> FpParams {
+        let g = |i: usize| u32::from_le_bytes(b[4 * i..4 * i + 4].try_into().unwrap());
+        FpParams {
+            sample_rate: g(0),
+            n_fft: g(1) as usize,
+            hop: g(2) as usize,
+            bin_lo: g(3) as usize,
+            bin_hi: g(4) as usize,
+            nb_f: g(5) as usize,
+            nb_t: g(6) as usize,
+            peaks_per_sec: f32::from_bits(g(7)),
+            fanout: g(8) as usize,
+            dt_min: g(9),
+            dt_max: g(10),
+            df_max: g(11) as i32,
+            min_prominence_db: f32::from_bits(g(12)),
+            whiten_w: g(13) as usize,
+            rank_raw: g(14) != 0,
+            q_f: g(15),
+            q_t: g(16),
+        }
+    }
+}

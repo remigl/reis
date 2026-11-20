@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 env:
-  VERSION: v0.1.0
+  VERSION: v0.2.0
 
 jobs:
   android:
@@ -98,6 +98,16 @@ jobs:
         shell: bash
         env: { GH_TOKEN: "${{ github.token }}" }
         run: |
+          # ready-to-use CLI bundles: executable + neural models (from the models-v1 release)
+          mkdir -p models && gh release download models-v1 -p "*.rnm" -D models
+          for os in linux-x86_64 windows-x64; do
+            exe=dist/reis-cli-${VERSION}-$os; [ -f "$exe" ] || exe="$exe.exe"
+            b=reis-cli-${VERSION}-$os; mkdir -p "$b/models"
+            cp "$exe" "$b/"; cp models/*.rnm "$b/models/"; cp README.md LICENSE-MIT "$b/"
+            if [ "$os" = windows-x64 ]; then (cd "$b" && zip -qr "../dist/$b.zip" .); else tar czf "dist/$b.tar.gz" "$b"; fi
+            rm "$exe"
+          done
+          cp models/*.rnm dist/
           ls -la dist
           (cd dist && sha256sum * > SHA256SUMS.txt)
           if gh release view "$VERSION" >/dev/null 2>&1; then

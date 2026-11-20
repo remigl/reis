@@ -1,7 +1,121 @@
 # Benchmarks
 
-Tout est reproductible : `scripts/reproduce_benchmarks.sh` (≈ 15 min sur 2 cœurs).
-Résultats bruts : `benchmarks/results/`.
+Tout est reproductible :
+- sons (moteur sémantique + exact) : `benchmarks/esc50.sh ESC50_DIR MODELS_DIR` (≈ 40 min, 2 cœurs) ;
+- musique (moteur exact, temps réel, passage à l'échelle) : `scripts/reproduce_benchmarks.sh` (≈ 15 min).
+
+Résultats bruts : `benchmarks/results/`. Machine : conteneur Linux x86-64,
+2 cœurs. **Aucune mesure sur téléphone** (CPU, RAM, batterie) : un ARM milieu
+de gamme est typiquement 2 à 4× plus lent par cœur.
+
+# Partie A — Sons : ESC-50
+
+## Protocole
+
+[ESC-50](https://github.com/karolpiczak/ESC-50) : 2 000 enregistrements réels
+de 5 s, 50 catégories (animaux, nature, bruits humains, domestiques, urbains),
+répartis en 5 plis. `benchmarks/prepare_esc50.py` :
+
+- **bibliothèque** : plis 1–4 de **40** catégories = 1 280 références ;
+- **requêtes** : pli 5 des **50** catégories = 400 sons par condition, jamais vus ;
+  les 10 catégories absentes de la bibliothèque (airplane, cat, clock_alarm, crickets, door_wood_knock, frog, insects, pouring_water, siren, train)
+  mesurent les **faux positifs** ;
+- **conditions** : `clean` ; `speaker` (haut-parleur de téléphone 300–6 500 Hz,
+  résonance, saturation, pièce RT60 0,3–0,6 s, micro) ; `noise10` (bruit rose
+  + brun à 10 dB) ; `speaker_noise5` (haut-parleur + pièce + bruit à 5 dB) ;
+- **même enregistrement** : extraits de 3 s de 183 références, mêmes dégradations.
+
+Colonnes : *ensemble fermé* = la bonne catégorie est en tête (jamais de rejet) ;
+*top-5* = parmi les 5 premières ; puis, au **seuil calibré automatiquement** :
+bonnes réponses acceptées, mauvaises catégories acceptées, sons inconnus
+acceptés ; enfin le meilleur résultat possible quand on n'accepte que 5 % des
+sons inconnus (seuil choisi a posteriori sur les données de test : borne
+optimiste).
+
+## A1. Moteur sémantique, modèle mn10 (défaut)
+
+| condition | ensemble fermé | top-5 | correct @ seuil calibré | mauvaise catégorie | inconnus acceptés | correct @ 5 % d'inconnus |
+|---|---|---|---|---|---|---|
+| clean | **88,8 %** | 97,8 % | 57,2 % | 3,1 % | 7,5 % | 55,0 % |
+| speaker | **75,9 %** | 96,2 % | 29,1 % | 0,9 % | 0,0 % | 32,8 % |
+| noise10 | **73,8 %** | 94,1 % | 39,7 % | 5,0 % | 3,8 % | 40,3 % |
+| speaker_noise5 | **55,0 %** | 84,1 % | 16,9 % | 7,5 % | 5,0 % | 17,8 % |
+
+Seuil calibré 0,605 ; validation croisée interne (leave-one-out) 93,2 % ;
+115–200 ms par requête de 5 s (3 fenêtres + recherche, machine plus ou moins chargée).
+
+## A2. Avec augmentation `--augment speaker`
+
+| condition | ensemble fermé | top-5 | correct @ seuil calibré | mauvaise catégorie | inconnus acceptés | correct @ 5 % d'inconnus |
+|---|---|---|---|---|---|---|
+| clean | 89,4 % | 96,9 % | 42,2 % | 3,1 % | 3,8 % | 50,0 % |
+| speaker | **81,9 %** (+6,0) | 97,8 % | 21,2 % | 3,4 % | 1,2 % | 35,0 % |
+| noise10 | 76,2 % (+2,4) | 95,3 % | 24,1 % | 0,0 % | 1,2 % | 42,2 % |
+| speaker_noise5 | 58,4 % (+3,4) | 89,4 % | 9,4 % | 0,0 % | 0,0 % | 17,5 % |
+
+L'augmentation améliore la reconnaissance via haut-parleur mais rend le seuil
+calibré plus strict (0,675) : avec elle, choisir `--false-accept 0.3` ou un
+seuil mesuré par `reis eval`.
+
+## A3. Modèle léger mn04
+
+| condition | ensemble fermé | top-5 | correct @ seuil calibré | mauvaise catégorie | inconnus acceptés | correct @ 5 % d'inconnus |
+|---|---|---|---|---|---|---|
+| clean | 85,9 % | 98,8 % | 69,1 % | 3,4 % | 26,2 % | 38,1 % |
+| speaker | 68,8 % | 95,9 % | 35,3 % | 4,7 % | 12,5 % | 16,6 % |
+| noise10 | 66,2 % | 94,1 % | 45,0 % | 15,6 % | 21,2 % | 28,1 % |
+| speaker_noise5 | 46,6 % | 84,1 % | 16,2 % | 20,0 % | 21,2 % | 8,4 % |
+
+56 ms par requête de 5 s (≈ 2× plus rapide que mn10), bibliothèque 3,8 Mo au
+lieu de 15,9 Mo.
+
+## A4. Choix mesurés pour le moteur sémantique
+
+| essai | ensemble fermé clean / speaker | décision |
+|---|---|---|
+| embedding 960 d (avant-dernière couche) | 88,8 % / 75,9 % | **gardé** |
+| probabilités des 527 classes (log-odds) | 70,9 % / 42,2 % | rejeté |
+| concaténation des deux | 82,5 % / 54,1 % | rejeté |
+| modèle mn04 au lieu de mn10 | 85,9 % / 68,8 % | option « mobile » |
+| sans écarter les fenêtres silencieuses | seuil calibré inutilisable (1,001) | silence ignoré (−30 dB sous la fenêtre la plus forte) |
+| sans centrage des vecteurs | cosinus tous entre 0,7 et 1 | centrage sur la moyenne de la bibliothèque |
+| règle de rejet : score / écart au 2e / score + 2×écart (correct @ 5 % d'inconnus, clean ; speaker) | 55,0 / 42,8 / 50,6 % ; 32,8 / 31,9 / 35,9 % | score seul (meilleur en son propre, le plus simple) ; l'écart ne se trompe jamais de catégorie — piste d'amélioration |
+
+## A5. Moteur exact sur des sons
+
+| tâche | top-1 | erreurs |
+|---|---|---|
+| même enregistrement, extrait 3 s, clean | **89,6 %** | 0 |
+| idem, speaker | 48,1 % | 0 |
+| idem, noise10 | 70,5 % | 0 |
+| idem, speaker_noise5 | 25,7 % | 0 |
+| **autre** enregistrement de la même catégorie | 0,6 % | 0 |
+
+Le moteur exact ne se trompe jamais mais ne sait reconnaître que
+l'enregistrement lui-même. Ses règles sont réglées pour la musique ; les sons
+d'environnement (pluie, vent) ont moins de pics tonaux, d'où les scores plus bas
+via haut-parleur. Le moteur sémantique prend le relais pour la catégorie.
+
+## A6. Ce que ces chiffres veulent dire
+
+- **Ensemble fermé** (« lequel de mes sons est-ce ? ») : très bon, 88,8 % sur 40
+  catégories en son propre, la bonne réponse dans le top-5 à 97,8 %.
+- **Ensemble ouvert** (« est-ce l'un de mes sons, ou autre chose ? ») : c'est
+  le point dur, comme pour tous les systèmes par plus proches voisins. Au
+  réglage par défaut, environ 1 son connu sur 2 est accepté en son propre, avec
+  7,5 % de sons inconnus acceptés à tort ; les autres reçoivent « ? » et le tag
+  AudioSet en secours.
+- **La calibration automatique ne promet pas un taux exact** : 20 % estimés ont
+  donné 7,5 % réels (mn10), 3,8 % (mn10 + augmentation), 26 % (mn04). Pour
+  un usage où les fausses alertes coûtent cher, mesurer sur ses propres données
+  (`reis eval … --threshold -1 --csv`, puis `benchmarks/openset.py`) et fixer
+  `--threshold`.
+- ESC-50 est difficile (catégories proches : « pluie » / « crépitement de feu »
+  / « vagues ») ; les meilleurs systèmes entraînés spécialement atteignent
+  ≈ 95–98 % en ensemble fermé. Reis n'est **pas entraîné** sur ces catégories :
+  il les apprend de 32 exemples chacune, en quelques secondes.
+
+# Partie B — Musique : moteur exact
 
 ## Conditions de mesure — à lire avant les chiffres
 
@@ -16,7 +130,7 @@ Résultats bruts : `benchmarks/results/`.
   des briques partagées (mêmes gammes, mêmes kits) : un piège à faux positifs
   plutôt pessimiste. La musique réelle (voix, mixages denses) est différente :
   **refaire le benchmark sur une vraie bibliothèque est la prochaine étape**
-  (`reis build` + `make_queries.py` fonctionnent tels quels sur de vrais fichiers).
+  (`reis index` + `make_queries.py` fonctionnent tels quels sur de vrais fichiers).
 * **Requêtes** (`make_queries.py`) : 3 200 extraits à position aléatoire,
   16 kHz mono comme un micro ; 10 conditions × 4 durées (2/3/5/10 s) × 60
   positifs + 20 négatifs.

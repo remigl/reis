@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Full, deterministic benchmark pipeline (≈15 min on 2 cores).
+# Music / exact-engine benchmark pipeline (≈15 min on 2 cores). ESC-50 (sounds): benchmarks/esc50.sh
 # Needs: Rust, Python 3 + numpy + scipy, ffmpeg built with libchromaprint/libmp3lame/libopus.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; W="${1:-$ROOT/bench-work}"; R="$ROOT/target/release/reis"
@@ -10,7 +10,8 @@ mkdir -p "$W" && cd "$W"
 mkdir -p db/art; for i in $(seq 0 29); do [ -f "db/art/Album $i.webp" ] || ffmpeg -v error -y -f lavfi \
   -i "gradients=s=240x240:seed=$i,format=yuv420p" -frames:v 1 -c:v libwebp -quality 70 "db/art/Album $i.webp"; done
 [ -d qs ]  || python3 "$ROOT/benchmarks/make_queries.py" db neg qs 60 20 7
-$R build --meta db/meta.tsv --lyrics-dir db/lyrics --art-dir db/art --out catalog.reis
+[ -d music ] || python3 "$ROOT/benchmarks/music_layout.py" db music
+$R index music -o catalog.reis --engines exact
 $R info catalog.reis | tee info.txt
 $R bench catalog.reis qs/queries.tsv --csv landmark.csv | tee landmark.md
 python3 "$ROOT/benchmarks/calibrate.py" landmark.csv 0.0003

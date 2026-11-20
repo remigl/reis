@@ -162,6 +162,8 @@ class _HomeScreenState extends State<HomeScreen> {
           if (_svc.permissionDenied)
             const Center(child: Padding(padding: EdgeInsets.all(32),
                 child: Text('Reis a besoin du micro pour écouter la musique.\nAutorise-le dans les réglages du téléphone.', textAlign: TextAlign.center)))
+          else if (_song == null && _svc.detection != null && const ['similar', 'tag', 'exact'].contains(_svc.detection!.kind))
+            DetectionView(d: _svc.detection!)
           else if (_song == null)
             ListeningView(level: s.levelDbfs)
           else
@@ -178,6 +180,46 @@ class _HomeScreenState extends State<HomeScreen> {
               IconButton(tooltip: 'Paroles', icon: const Icon(Icons.text_fields), onPressed: _settings),
             ]),
           ),
+        ]),
+      ),
+    );
+  }
+}
+
+/// Library of sounds (animals, noises…): shows what is heard right now.
+class DetectionView extends StatelessWidget {
+  final Detection d;
+  const DetectionView({super.key, required this.d});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = Theme.of(context).colorScheme;
+    final known = d.kind == 'similar' || d.kind == 'exact';
+    final name = d.label.split('/').last.replaceAll('_', ' ');
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Icon(known ? Icons.graphic_eq : Icons.help_outline, size: 56, color: known ? c.primary : Colors.white54),
+          const SizedBox(height: 16),
+          Text(name, textAlign: TextAlign.center, style: const TextStyle(fontSize: 34, fontWeight: FontWeight.w700)),
+          if (d.label.contains('/'))
+            Text(d.label.substring(0, d.label.lastIndexOf('/')), style: const TextStyle(color: Colors.white54)),
+          const SizedBox(height: 8),
+          Text(
+            known ? 'reconnu dans ta bibliothèque · ${(d.score * 100).round()}' : 'absent de ta bibliothèque — ressemble à : ${(d.score * 100).round()} %',
+            style: const TextStyle(color: Colors.white70),
+            textAlign: TextAlign.center,
+          ),
+          if (d.candidates.length > 1) ...[
+            const SizedBox(height: 24),
+            for (final cand in d.candidates.skip(known ? 1 : 0).take(3))
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Text('${cand.$1.split('/').last.replaceAll('_', ' ')}  ${(cand.$2 * 100).round()}',
+                    style: const TextStyle(color: Colors.white38)),
+              ),
+          ],
         ]),
       ),
     );

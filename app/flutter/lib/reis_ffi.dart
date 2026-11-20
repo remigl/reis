@@ -50,6 +50,14 @@ final _lyrLine = _lib.lookupFunction<Pointer<Uint8> Function(Pointer<Void>, Uint
 final _wordCount = _lib.lookupFunction<Uint32 Function(Pointer<Void>, Uint32, Uint32), int Function(Pointer<Void>, int, int)>('reis_lyrics_word_count');
 final _word = _lib.lookupFunction<Uint8 Function(Pointer<Void>, Uint32, Uint32, Uint32, Pointer<Uint32>, Pointer<Uint32>),
     int Function(Pointer<Void>, int, int, int, Pointer<Uint32>, Pointer<Uint32>)>('reis_lyrics_word');
+final _catHas = _lib.lookupFunction<Uint8 Function(Pointer<Void>, Uint32), int Function(Pointer<Void>, int)>('reis_catalog_has');
+final _refLabel = _lib.lookupFunction<Pointer<Uint8> Function(Pointer<Void>, Uint32, Pointer<Uint32>),
+    Pointer<Uint8> Function(Pointer<Void>, int, Pointer<Uint32>)>('reis_ref_label');
+final _recNew = _lib.lookupFunction<Pointer<Void> Function(Pointer<Void>), Pointer<Void> Function(Pointer<Void>)>('reis_recognizer_new');
+final _recFree = _lib.lookupFunction<Void Function(Pointer<Void>), void Function(Pointer<Void>)>('reis_recognizer_free');
+final _recI16 = _lib.lookupFunction<Pointer<Utf8> Function(Pointer<Void>, Pointer<Int16>, Uint32, Uint32, Uint32),
+    Pointer<Utf8> Function(Pointer<Void>, Pointer<Int16>, int, int, int)>('reis_recognize_i16');
+final _strFree = _lib.lookupFunction<Void Function(Pointer<Utf8>), void Function(Pointer<Utf8>)>('reis_string_free');
 final _engNew = _lib.lookupFunction<Pointer<Void> Function(Pointer<Void>), Pointer<Void> Function(Pointer<Void>)>('reis_engine_new');
 final _engFree = _lib.lookupFunction<Void Function(Pointer<Void>), void Function(Pointer<Void>)>('reis_engine_free');
 final _engReset = _lib.lookupFunction<Void Function(Pointer<Void>), void Function(Pointer<Void>)>('reis_engine_reset');
@@ -93,6 +101,17 @@ class ReisCatalog {
   }
 
   int get songCount => _songCount(ptr);
+
+  /// Library built with the exact engine (same recording + position + lyrics).
+  bool get hasExact => _catHas(ptr, 0) == 1;
+
+  /// Library built with the semantic engine (same kind of sound).
+  bool get hasSemantic => _catHas(ptr, 1) == 1;
+
+  String label(int id) => using((arena) {
+        final len = arena<Uint32>();
+        return _str(_refLabel(ptr, id, len), len.value);
+      });
 
   String _str(Pointer<Uint8> p, int len) => len == 0 ? '' : utf8.decode(p.asTypedList(len), allowMalformed: true);
 
@@ -139,14 +158,54 @@ class EngineSnapshot {
       EngineSnapshot(m[0] as int, m[1] as int, m[2] as double, m[3] as double, m[4] as bool, m[5] as bool, m[6] as double);
 }
 
-/// Recognition engine. Owned by the worker isolate (see engine_service.dart).
+/// One-shot recogniser (all engines + general tags). Returns the JSON
+/// described in docs/API.md. Owned by the worker isolate.
+class ReisRecognizer {
+  final Pointer<Void> ptr;
+  Pointer<Int16> _buf = calloc<Int16>(1);
+  int _cap = 1;
+
+  ReisRecognizer._(this.ptr);
+
+  static ReisRecognizer? create(ReisCatalog cat) {
+    final p = _recNew(cat.ptr);
+    return p == nullptr ? null : ReisRecognizer._(p);
+  }
+
+  /// [samples]: mono 16-bit PCM.
+  String recognize(Int16List samples, int rate) {
+    if (samples.length > _cap) {
+      calloc.free(_buf);
+      _cap = samples.length;
+      _buf = calloc<Int16>(_cap);
+    }
+    _buf.asTypedList(samples.length).setAll(0, samples);
+    final out = _recI16(ptr, _buf, samples.length, 1, rate);
+    final txt = out.toDartString();
+    _strFree(out);
+    return txt;
+  }
+
+  void dispose() {
+    _recFree(ptr);
+    calloc.free(_buf);
+  }
+}
+
+/// Real-time exact engine. Owned by the worker isolate (see engine_service.dart).
 class ReisEngine {
   final Pointer<Void> ptr;
   final Pointer<ReisState> _st = calloc<ReisState>();
   Pointer<Int16> _buf = calloc<Int16>(4096);
   int _cap = 4096;
 
-  ReisEngine(ReisCatalog cat) : ptr = _engNew(cat.ptr);
+  ReisEngine._(this.ptr);
+
+  /// Null when the library has no exact engine.
+  static ReisEngine? create(ReisCatalog cat) {
+    final p = _engNew(cat.ptr);
+    return p == nullptr ? null : ReisEngine._(p);
+  }
 
   void pushPcm16(Uint8List bytes, int rate, int channels, double clockEndMs) {
     final n = bytes.lengthInBytes ~/ 2;

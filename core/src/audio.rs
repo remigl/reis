@@ -182,3 +182,190 @@ mod tests {
         assert!((r - (-3.01)).abs() < 0.3, "rms {r}");
     }
 }
+
+// ------------------------------------------------------------------ augmentation
+
+/// RBJ biquad, direct form I.
+#[derive(Clone, Copy)]
+struct Biquad {
+    b: [f32; 3],
+    a: [f32; 2],
+}
+
+impl Biquad {
+    fn new(kind: &str, f0: f32, q: f32, gain_db: f32, sr: f32) -> Biquad {
+        let w = 2.0 * std::f32::consts::PI * f0 / sr;
+        let (s, c) = w.sin_cos();
+        let al = s / (2.0 * q);
+        let a = 10f32.powf(gain_db / 40.0);
+        let (b0, b1, b2, a0, a1, a2) = match kind {
+            "lp" => (
+                (1.0 - c) / 2.0,
+                1.0 - c,
+                (1.0 - c) / 2.0,
+                1.0 + al,
+                -2.0 * c,
+                1.0 - al,
+            ),
+            "hp" => (
+                (1.0 + c) / 2.0,
+                -(1.0 + c),
+                (1.0 + c) / 2.0,
+                1.0 + al,
+                -2.0 * c,
+                1.0 - al,
+            ),
+            _ => (
+                1.0 + al * a,
+                -2.0 * c,
+                1.0 - al * a,
+                1.0 + al / a,
+                -2.0 * c,
+                1.0 - al / a,
+            ), // peaking
+        };
+        Biquad {
+            b: [b0 / a0, b1 / a0, b2 / a0],
+            a: [a1 / a0, a2 / a0],
+        }
+    }
+    fn run(&self, x: &mut [f32]) {
+        let (mut x1, mut x2, mut y1, mut y2) = (0f32, 0f32, 0f32, 0f32);
+        for v in x.iter_mut() {
+            let y =
+                self.b[0] * *v + self.b[1] * x1 + self.b[2] * x2 - self.a[0] * y1 - self.a[1] * y2;
+            x2 = x1;
+            x1 = *v;
+            y2 = y1;
+            y1 = y;
+            *v = y;
+        }
+    }
+}
+
+fn xorshift(s: &mut u64) -> f32 {
+    *s ^= *s << 13;
+    *s ^= *s >> 7;
+    *s ^= *s << 17;
+    // approx. standard normal (sum of 4 uniforms)
+    let u = |s: u64, k: u32| ((s >> (k * 16)) & 0xFFFF) as f32 / 65536.0;
+    (u(*s, 0) + u(*s, 1) + u(*s, 2) + u(*s, 3) - 2.0) * 1.732
+}
+
+/// FFT convolution (overlap-add), output truncated to `x.len()`.
+pub fn convolve(x: &[f32], h: &[f32]) -> Vec<f32> {
+    let n = (h.len() * 2).next_power_of_two().max(1024);
+    let block = n - h.len() + 1;
+    let fft = crate::fft::Fft::new(n);
+    let mut hr = vec![0f32; n];
+    let mut hi = vec![0f32; n];
+    hr[..h.len()].copy_from_slice(h);
+    fft.run(&mut hr, &mut hi);
+    let mut y = vec![0f32; x.len() + h.len()];
+    let (mut br, mut bi) = (vec![0f32; n], vec![0f32; n]);
+    let mut s = 0;
+    while s < x.len() {
+        let e = (s + block).min(x.len());
+        br.iter_mut().for_each(|v| *v = 0.0);
+        bi.iter_mut().for_each(|v| *v = 0.0);
+        br[..e - s].copy_from_slice(&x[s..e]);
+        fft.run(&mut br, &mut bi);
+        for k in 0..n {
+            let (a, b) = (br[k] * hr[k] - bi[k] * hi[k], br[k] * hi[k] + bi[k] * hr[k]);
+            br[k] = a;
+            bi[k] = -b; // conjugate: inverse FFT through the forward transform
+        }
+        fft.run(&mut br, &mut bi);
+        for k in 0..(e - s + h.len() - 1).min(n) {
+            y[s + k] += br[k] / n as f32;
+        }
+        s = e;
+    }
+    y.truncate(x.len());
+    y
+}
+
+/// Simulates "played on a small speaker, in a room, recorded by a phone":
+/// 300–6500 Hz band-pass, 1.8 kHz resonance, soft saturation, room reverb
+/// (RT60 0.3–0.6 s, direct/reverberant 0–6 dB), mic high-pass and self-noise.
+/// Deterministic for a given `seed`. Used to augment libraries (`--augment speaker`).
+pub fn speaker_sim(x: &[f32], rate: u32, seed: u64) -> Vec<f32> {
+    let sr = rate as f32;
+    let mut s = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+    let mut y = x.to_vec();
+    for f in [
+        Biquad::new("hp", 300.0, 0.541, 0.0, sr),
+        Biquad::new("hp", 300.0, 1.307, 0.0, sr),
+        Biquad::new("lp", 6500.0, 0.541, 0.0, sr),
+        Biquad::new("lp", 6500.0, 1.307, 0.0, sr),
+        Biquad::new("peak", 1800.0, 2.0, 4.0, sr),
+    ] {
+        f.run(&mut y);
+    }
+    let m = y.iter().fold(0f32, |a, v| a.max(v.abs())).max(1e-9);
+    let k = 1.5f32;
+    y.iter_mut()
+        .for_each(|v| *v = (k * *v / m).tanh() / k.tanh());
+    // room impulse response
+    let u = |s: &mut u64| (xorshift(s) * 0.29 + 0.5).clamp(0.0, 1.0);
+    let rt60 = 0.3 + 0.3 * u(&mut s);
+    let drr_db = 6.0 * u(&mut s);
+    let n = (rt60 * sr) as usize;
+    let mut ir: Vec<f32> = (0..n)
+        .map(|i| {
+            if (i as f32) < 0.004 * sr {
+                0.0
+            } else {
+                xorshift(&mut s) * (-6.9 * i as f32 / sr / rt60).exp()
+            }
+        })
+        .collect();
+    let e: f32 = ir.iter().map(|v| v * v).sum::<f32>().max(1e-12);
+    let g = (10f32.powf(-drr_db / 10.0) / e).sqrt();
+    ir.iter_mut().for_each(|v| *v *= g);
+    ir[0] += 1.0;
+    let early = ((0.003 + 0.005 * u(&mut s)) * sr) as usize;
+    if early < ir.len() {
+        ir[early] += 0.5;
+    }
+    let mut z = convolve(&y, &ir);
+    Biquad::new("hp", 100.0, 0.707, 0.0, sr).run(&mut z);
+    let m = z.iter().fold(0f32, |a, v| a.max(v.abs())).max(1e-9);
+    z.iter_mut()
+        .for_each(|v| *v = *v / m * 0.5 + 0.001 * xorshift(&mut s));
+    z
+}
+
+#[cfg(test)]
+mod aug_tests {
+    use super::*;
+    #[test]
+    fn convolve_matches_direct() {
+        let x: Vec<f32> = (0..3000)
+            .map(|i| ((i * 7919) % 101) as f32 / 50.0 - 1.0)
+            .collect();
+        let h: Vec<f32> = (0..700)
+            .map(|i| (-(i as f32) / 100.0).exp() * if i % 3 == 0 { 1.0 } else { -0.5 })
+            .collect();
+        let y = convolve(&x, &h);
+        for t in [0usize, 1, 699, 700, 1500, 2999] {
+            let d: f32 = (0..h.len())
+                .filter(|&k| k <= t)
+                .map(|k| h[k] * x[t - k])
+                .sum();
+            assert!((y[t] - d).abs() < 1e-3, "t {t}: {} vs {d}", y[t]);
+        }
+    }
+    #[test]
+    fn speaker_sim_is_deterministic_and_bandlimited() {
+        let sr = 16000;
+        let x: Vec<f32> = (0..sr)
+            .map(|i| (2.0 * std::f32::consts::PI * 100.0 * i as f32 / sr as f32).sin())
+            .collect();
+        let a = speaker_sim(&x, sr as u32, 7);
+        let b = speaker_sim(&x, sr as u32, 7);
+        assert_eq!(a, b);
+        // a 100 Hz tone is strongly attenuated by the 300 Hz high-pass
+        assert!(rms_dbfs(&a[4000..]) < rms_dbfs(&x) - 10.0);
+    }
+}

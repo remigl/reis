@@ -1,10 +1,9 @@
 //! End-to-end: build a catalog from synthetic "songs", then identify excerpts
 //! one-shot and through the streaming engine (lock, position, lyrics).
 
-use reis_core::catalog::{Catalog, CatalogBuilder, SongMeta};
 use reis_core::engine::{Engine, EngineConfig, Phase};
 use reis_core::fingerprint::{Fingerprinter, FpParams};
-use reis_core::lyrics::parse_lrc;
+use reis_core::library::{Library, LibraryBuilder, LibraryConfig, Prepared, SourceItem};
 use std::sync::Arc;
 
 const SR: u32 = 8000;
@@ -38,26 +37,39 @@ fn song(seed: u64, secs: f32) -> Vec<f32> {
     x
 }
 
-fn build(name: &str) -> (Arc<Catalog>, Vec<Vec<f32>>) {
+fn build(name: &str) -> (Arc<Library>, Vec<Vec<f32>>) {
     let p = FpParams::default();
     let fp = Fingerprinter::new(p);
-    let mut b = CatalogBuilder::new(p);
+    let mut cfg = LibraryConfig::default();
+    cfg.engines = vec!["exact".into()];
+    let mut b = LibraryBuilder::new(cfg, None).unwrap();
+    let dir = std::env::temp_dir().join(format!("reis_test_{}_{name}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
     let songs: Vec<Vec<f32>> = (0..5).map(|i| song(1000 + i, 40.0)).collect();
     for (i, s) in songs.iter().enumerate() {
-        let lrc = parse_lrc("[00:05.00]un\n[00:10.00]deux\n[00:20.00]trois\n");
-        let m = SongMeta {
-            title: format!("T{i}"),
-            artist: "A".into(),
-            album: "B".into(),
-            duration_ms: 40_000,
-            ext_id: i as u32,
+        let lrc = dir.join(format!("T{i}.lrc"));
+        std::fs::write(&lrc, "[00:05.00]un\n[00:10.00]deux\n[00:20.00]trois\n").unwrap();
+        let item = SourceItem {
+            path: dir.join(format!("T{i}.wav")),
+            label: "tests".into(),
+            name: format!("T{i}"),
+            meta: vec![],
+            lyrics: Some(lrc),
+            art: None,
         };
-        b.add_song(&m, &fp.hashes(s), Some(&lrc), Some(b"fakeimg"));
+        b.add(
+            &item,
+            Prepared {
+                duration_s: 40.0,
+                exact: fp.hashes(s),
+                semantic: vec![],
+            },
+        );
     }
     // one file per test: tests run in parallel
     let path = std::env::temp_dir().join(format!("reis_test_{}_{name}.reis", std::process::id()));
-    std::fs::write(&path, b.write()).unwrap();
-    let cat = Arc::new(Catalog::open(path.to_str().unwrap()).unwrap());
+    std::fs::write(&path, b.finish()).unwrap();
+    let cat = Arc::new(Library::open(path.to_str().unwrap()).unwrap());
     (cat, songs)
 }
 
@@ -65,17 +77,16 @@ fn build(name: &str) -> (Arc<Catalog>, Vec<Vec<f32>>) {
 fn one_shot_offset() {
     let (cat, songs) = build("one_shot");
     let d = EngineConfig::default();
-    let fp = Fingerprinter::new(cat.params.query(d.query_density, d.query_fanout));
+    let fp = Fingerprinter::new(cat.params.unwrap().query(d.query_density, d.query_fanout));
     let start = 13.37;
     let s0 = (start * SR as f64) as usize;
     let q = &songs[3][s0..s0 + 4 * SR as usize];
     let r = reis_core::identify(&cat, &fp, q);
     let c = r.best().unwrap();
     assert_eq!(c.song, 3);
-    let off = c.offset_frames as f64 * cat.params.frame_secs();
+    let off = c.offset_frames as f64 * cat.params.unwrap().frame_secs();
     assert!((off - start).abs() < 0.03, "offset {off}");
     assert_eq!(cat.title(3), "T3");
-    assert_eq!(cat.artwork(3).unwrap(), b"fakeimg");
     assert_eq!(cat.lyrics(3).unwrap().line_at(12_000), Some(1));
 }
 

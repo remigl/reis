@@ -1,22 +1,19 @@
-Premier prototype de **Reis** : reconnaissance musicale 100 % hors ligne avec paroles synchronisées.
+**Reis v0.2.0** — reconnaissance de sons 100 % hors ligne à partir de ta propre bibliothèque de références : musiques, cris d'animaux, bruits divers.
 
-### Fichiers
+Tu fournis un dossier de sons de référence, Reis en fait une bibliothèque d'empreintes, puis reconnaît ces sons dans un fichier ou au micro.
+
 | fichier | contenu |
 |---|---|
-| `reis-v0.1.0-android.apk` | app Android (arm64, armv7, x86_64), Android 7.0+ |
-| `reis-v0.1.0-windows-x64.zip` | app Windows (dézipper, lancer `reis.exe`) |
-| `reis-cli-*` | outil en ligne de commande : construire un catalogue, identifier, écouter au micro |
-| `libreis_core-*.so` | moteur natif Linux (pour intégrer Reis ailleurs) |
+| `reis-cli-v0.2.0-windows-x64.zip` / `-linux-x86_64.tar.gz` | outil `reis` + modèles neuronaux, prêt à l'emploi |
+| `reis-v0.2.0-android.apk` | app Android (importe une bibliothèque `.reis`) |
+| `reis-v0.2.0-windows-x64.zip` | app Windows |
+| `mn10_as.rnm`, `mn04_as.rnm` | modèles EfficientAT (MIT, AudioSet) convertis pour Reis |
 
-### Avant de lancer l'app : il faut un catalogue
-L'app ne contient aucune musique. Construis ton catalogue `.reis` à partir de ta bibliothèque (une fois, sur ordinateur) :
-
+Démarrage rapide :
 ```bash
-python3 index-builder/scan_library.py ~/Music build/
-reis-cli build --meta build/meta.tsv --out catalog.reis
+reis index mes-sons/ -o sons.reis      # un sous-dossier = une catégorie
+reis recognize sons.reis enregistrement.wav
 ```
-Puis, au premier lancement de l'app : **Importer un catalogue**.
+Documentation : `docs/README.md`. Mesures : `docs/BENCHMARKS.md`.
 
-### Limites connues
-- APK signé avec la clé de debug (installation manuelle, « sources inconnues »).
-- Précision mesurée sur un corpus synthétique ; pas encore validée sur de la vraie musique ni mesurée sur téléphone. Voir `docs/BENCHMARKS.md`.
+Limites : APK signé avec la clé de debug ; app jamais testée sur un vrai téléphone.

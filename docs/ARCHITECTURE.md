@@ -1,103 +1,134 @@
 # Architecture
 
+Objectif : un moteur **petit, sans dépendance, lisible**, que l'on peut
+modifier morceau par morceau. Tout le cœur tient dans `core/src/` (≈ 4 300
+lignes de Rust, bibliothèque standard uniquement).
+
 ```text
-                Flutter UI  (app/flutter — remplaçable sans toucher au moteur)
-                    │  dart:ffi  (core/src/ffi.rs, ABI C stable)
-                    ▼
-               reis-core (Rust, 0 dépendance)
-        ┌───────────┴────────────┐
-        ▼                        ▼
-  engine.rs  Listening ⇄ Locked ⇄ Paused        lyrics.rs  LRC → binaire compact
-   │   push_pcm(clock) / tick(now)                  │       line_at(pos) en O(log n)
-   ▼                                                ▼
- audio.rs (rééchantillonnage 8 kHz)          catalog.rs (fichier .reis mmap)
-   ▼                                           ├─ HIDX  index d'empreintes
- fingerprint.rs (constellation)                ├─ SONG  métadonnées 32 o/titre
-   ▼                                           ├─ STRS  chaînes dédupliquées
- index.rs (hash → (titre, temps), vote d'offset) ├─ LYRC paroles
-                                               └─ ARTW  jaquettes WebP dédupliquées
+ ┌──────────────── interfaces (remplaçables) ─────────────────┐
+ │ cli/ (reis)      app/flutter (Android, Windows…)   ton programme │
+ └───────┬──────────────────┬──────────────────────────┬──────┘
+         │ Rust             │ dart:ffi                 │ C ABI (ffi.rs)
+ ┌───────▼──────────────────▼──────────────────────────▼──────┐
+ │ recognize.rs   Recognizer : exact + sémantique + tags → verdict │
+ │ engine.rs      moteur temps réel (écoute / verrouillé / pause)  │
+ ├──────────────────────────────────────────────────────────────┤
+ │ library.rs     dossier → .reis (scan, build, lecture mmap)      │
+ ├──────────────┬──────────────────────┬───────────────────────┤
+ │ exact        │ semantic.rs           │ lyrics.rs  paroles LRC │
+ │ fingerprint.rs│  fenêtres, centrage,  │ (artwork dans library) │
+ │ index.rs      │  int8, kNN, calibration│                       │
+ ├──────────────┼──────────────────────┴───────────────────────┤
+ │              │ nn.rs  runtime CNN (.rnm) : log-mel + conv/SE/… │
+ ├──────────────┴──────────────────────────────────────────────┤
+ │ audio.rs (WAV, rééchantillonnage, augmentation)  fft.rs  json.rs │
+ │ bytes.rs (varints, mmap)   decode.rs (ffmpeg/ffprobe, build seulement) │
+ └──────────────────────────────────────────────────────────────┘
 ```
 
-Le moteur ne connaît ni l'interface ni l'horloge système : l'hôte pousse du PCM
-avec un horodatage monotone et appelle `tick(now)`. C'est ce qui rend le moteur
-testable (`reis simulate`, `core/tests/end_to_end.rs`) et portable (Android,
-iOS, desktop, CLI).
+## Modules
 
-## Empreinte (fingerprint.rs)
-
-1. Mono 8 kHz, STFT Hann 1024 points, pas 128 (16 ms).
-2. Log-puissance avec **plancher relatif** (max de la trame − 60 dB) : invariant
-   au gain et insensible au bruit de fond d'enregistrement.
-3. Pics = maxima locaux de la log-puissance brute sur un voisinage
-   ±12 bins × ±8 trames, avec proéminence ≥ 3 dB au-dessus de la moyenne locale
-   (spectre blanchi), bande 250 Hz – 3,75 kHz (ce qu'un haut-parleur de
-   téléphone restitue).
-4. Densité bornée : les 30 pics les plus énergétiques par seconde (référence).
-5. Chaque pic ancre est apparié aux 3 pics suivants (zone 2–100 trames) ;
-   hash 24 bits = f1 | Δf | Δt, quantifiés (×2) pour tolérer ±1 bin / ±1 trame.
-6. **Asymétrie requête / référence** : la requête utilise 2× plus de pics et
-   un fan-out ×4, de sorte que les paires de la référence (plus clairsemées)
-   restent présentes malgré le bruit qui réordonne les pics. L'index reste
-   petit, seule la requête coûte un peu plus de CPU.
-
-Chacun de ces choix a été mesuré (voir `docs/BENCHMARKS.md`, section
-« Itérations ») : par exemple, détecter les pics sur le spectre brut avec
-plancher relatif au lieu du spectre blanchi a fait passer la proportion de pics
-de référence retrouvés sous bruit à 10 dB de 21 % à 59 %, et en volume faible
-de 20 % à 64 %.
-
-## Index (index.rs)
-
-Entrées `(hash 24 bits, titre 24 bits, trame 16 bits)` triées. Répertoire de
-2^B seaux (B choisi pour ~16 entrées/seau) puis, par seau, entrées codées en
-varints delta (hash bas, titre, temps). Lecture directe dans le fichier mappé
-en mémoire : aucune désérialisation au démarrage, RAM ≈ pages réellement
-touchées. ≈ 4,3 octets par posting mesurés.
-
-Matching : chaque hash de la requête vote pour `(titre, offset = t_ref − t_req)`,
-au plus un vote par trame de requête et par alignement (les sons tenus ne
-gonflent pas les scores), fusion ±1 trame. Le meilleur offset donne la
-**position dans le morceau** à 16 ms près (erreur médiane mesurée 5 ms).
-
-Règle d'acceptation (calibrée, `benchmarks/calibrate.py` + `sim_engine.py`) :
-`score ≥ 13` et `score ≥ 2,2 × (second + 1)`.
-
-## Moteur temps réel (engine.rs)
-
-| état | micro | traitement |
+| fichier | rôle | dépend de |
 |---|---|---|
-| Listening | ouvert | tentative toutes les 0,5 s sur la fenêtre 2 → 10 s |
-| Locked | ouvert, **niveau seulement** (ou fermé en mode batterie) | position = ancre + temps écoulé ; vérification 4–10 s toutes les 15 s |
-| Paused | ouvert | silence > 1,5 s → position figée ; reprise du son → reprise + vérification immédiate |
+| `fft.rs` | FFT radix-2 itérative | — |
+| `audio.rs` | lecture WAV, rééchantillonneur sinc à table, simulation haut-parleur + pièce, convolution FFT | fft |
+| `json.rs` | lecture/écriture JSON (en-têtes, métadonnées, sorties) | — |
+| `bytes.rs` | varints, lecture little-endian, fichier mappé en mémoire | — |
+| `decode.rs` | décodage de tous formats et tags via ffmpeg/ffprobe — utilisé uniquement pour construire | json |
+| `fingerprint.rs` | empreinte constellation : spectrogramme, pics, hashes ; `FpParams` | fft |
+| `index.rs` | index inversé compressé + vote par décalage | bytes |
+| `nn.rs` | runtime de réseaux convolutifs audio (format `.rnm`) | fft, json, audio |
+| `semantic.rs` | moteur sémantique : fenêtres, embeddings, int8, recherche, calibration | nn, json |
+| `lyrics.rs` | LRC (+ mot à mot) ↔ format binaire compact | bytes |
+| `library.rs` | scan d'un dossier, `LibraryBuilder`, format `.reis`, `Library` | tout ce qui précède |
+| `recognize.rs` | `Recognizer` : orchestration des moteurs et décision | library |
+| `engine.rs` | moteur de flux pour le micro (moteur exact) | library |
+| `ffi.rs` | ABI C : bibliothèque, reconnaissance JSON, moteur de flux, paroles | tout |
 
-Vérification : si le même titre est retrouvé, l'écart à la position prédite
-(> 60 ms) est corrigé ; un autre titre fortement reconnu remplace le courant ;
-4 échecs consécutifs → retour en écoute continue **sans effacer l'affichage**
-(les paroles continuent de défiler, icône « incertain »).
+Le CLI (`cli/src/`) n'est qu'une couche fine : `cmds.rs` (commandes
+courantes), `research.rs` (benchmarks), `util.rs`.
 
-Les discontinuités du flux audio (micro coupé, perte de paquets > 250 ms)
-réinitialisent la fenêtre : une fenêtre d'analyse est toujours contiguë, donc
-son horodatage est exact.
+## Flux de données
 
-## Format `.reis`
+**Construction** (`reis index`) :
 
-En-tête `REIS | version | n | (tag, offset, len)*`, sections alignées sur 8 octets :
-`PARM` (paramètres d'empreinte — un index n'est jamais interrogé avec d'autres
-paramètres), `HIDX`, `SONG`, `STRS`, `LYRC`, `ARTW`. Détails dans
-`core/src/catalog.rs`.
+```text
+scan_dir(dossier) ─▶ SourceItem {chemin, label, nom, meta, .lrc, image}
+      │ (threads)  decode::load → 32 kHz mono
+      ▼
+LibraryBuilder::prepare  ─┬─ 8 kHz → Fingerprinter::hashes ─────────▶ IndexBuilder
+                          └─ Model::logmel → fenêtres → forward ────▶ SemanticBuilder
+LibraryBuilder::add       ─ métadonnées, paroles (LRC→binaire), image (WebP, dédup)
+LibraryBuilder::finish    ─ tri/compression de l'index, centrage+int8, calibration
+                          ─▶ un fichier .reis (sections, voir FORMATS.md)
+```
 
-Paroles (`lyrics.rs`) : lignes uniques stockées une fois (les refrains
-répétés ne coûtent qu'un index), temps en centisecondes delta-codés, mots
-optionnels (LRC « enhanced » `<mm:ss.xx>`).
+**Reconnaissance** (`Recognizer::recognize`) :
 
-## Interface (app/flutter)
+```text
+audio (n'importe quel taux) ─┬─ 8 kHz → hashes (requête dense) → match_hashes → ExactHit
+                             ├─ 32 kHz → fenêtres → vecteurs centrés → ref_scores → label_scores
+                             └─ 32 kHz → réseau complet → 527 probabilités (tags)
+                      decide(): Exact accepté > Similar ≥ seuil > Tag ≥ 0,3 > Unknown
+```
 
-* `engine_service.dart` : moteur dans un **isolate dédié** (le calcul ne bloque
-  jamais l'UI), micro via `record` (PCM 16 bits 16 kHz, AGC / suppression de
-  bruit désactivés — ils détruisent exactement le signal utile), ouverture /
-  fermeture du micro pilotée par `wantsAudio`.
-* `lyrics_view.dart` : ligne active trouvée par recherche dichotomique à chaque
-  frame (Ticker), position extrapolée entre deux ticks → défilement fluide.
-* `settings.dart` : police, taille, gras, espacement, hauteur de ligne,
-  alignement, couleur, contraste — persistés (`shared_preferences`, clés
-  `lyrics.*`).
+## Choix techniques (et pourquoi)
+
+| choix | raison | mesuré |
+|---|---|---|
+| Rust sans dépendance | binaire de 0,5 Mo, compile partout (Android NDK, iOS, Windows), rien à auditer | `libreis_core.so` 0,41 Mo |
+| constellation plutôt que Chromaprint pour le moteur exact | Chromaprint ne survit pas au trajet haut-parleur → micro | 100 % vs 5 % à 10 s |
+| réseau EfficientAT plutôt que YAMNet / VGGish | meilleur rapport qualité / calcul publié pour AudioSet (mAP 0,471 pour mn10) | 28 ms pour 3 s d'audio (x86, 2 cœurs) |
+| runtime neuronal maison plutôt qu'ONNX Runtime / TFLite | 0 dépendance, + 300 lignes au lieu de + 10–20 Mo de binaire, même résultat | cosinus 0,999998 vs PyTorch |
+| embeddings (960 d) plutôt que probabilités de classes | se généralise mieux aux catégories de l'utilisateur | 88,8 % vs 70,9 % |
+| centrage + int8 | cosinus mieux répartis ; ¼ de la taille du float32 | seuils exploitables |
+| recherche exhaustive | exacte, simple ; suffisante jusqu'à ~10⁵ fenêtres | — |
+| un fichier `.reis` autonome (modèle inclus) | une seule chose à copier sur le téléphone | — |
+| JSON pour les métadonnées | lisible, extensible sans changer de version | — |
+
+## Points d'extension
+
+### Ajouter un modèle neuronal
+
+Aucune ligne de Rust si le réseau n'utilise que les opérations supportées
+(convolutions groupées, squeeze-excitation, résiduels, pooling global, couches
+denses, activations courantes) : écrire un exportateur qui produit un `.rnm`
+(voir [MODELS.md](MODELS.md)). Exemple : `tools/models/export_efficientat.py`.
+Une nouvelle opération = une variante de `enum Op` et son calcul dans
+`Model::forward_mel` (`nn.rs`).
+
+### Ajouter un moteur
+
+Un moteur, c'est trois choses :
+1. une étape `prepare` (calcul par référence, parallélisable) dans
+   `LibraryBuilder::prepare` → un champ de `Prepared` ;
+2. une section du fichier (`finish` : 4 lettres, ex. `CHRM`) ;
+3. une lecture + recherche dans `Recognizer::recognize`, qui alimente
+   `Recognition` et `decide`.
+
+Exemples d'évolutions possibles : empreinte de reprises (chroma), index
+approximatif (IVF / HNSW) pour très grandes bibliothèques, détection
+d'événements multiples.
+
+### Changer l'interface
+
+L'app Flutter ne connaît que l'ABI C (`ffi.rs`) : une autre interface
+(Kotlin natif, SwiftUI, web via WASM, Python via `ctypes`) peut la remplacer
+sans toucher au moteur. La fonction la plus simple, `reis_recognize_f32`,
+renvoie tout le résultat en JSON.
+
+### Changer la règle de décision
+
+`Recognizer::decide` (10 lignes). Les seuils sont dans `RecognizerConfig`
+(requête) et dans la calibration de la bibliothèque (construction).
+
+## Tests
+
+```bash
+cargo test --release      # unitaires (FFT, rééchantillonnage, index, LRC, JSON,
+                          #   f16, convolutions, augmentation) + bout en bout
+reis model-check models/mn10_as.rnm models/mn10_as.ref.bin   # runtime vs PyTorch
+```
+
+Les benchmarks (`benchmarks/`) sont des tests de qualité reproductibles :
+voir [BENCHMARKS.md](BENCHMARKS.md).

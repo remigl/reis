@@ -4,12 +4,12 @@
 
 #![allow(clippy::not_unsafe_ptr_arg_deref)] // C ABI: callers pass handles obtained from this module
 
-use crate::catalog::Catalog;
 use crate::engine::{Engine, EngineConfig};
+use crate::library::Library;
 use std::ffi::{c_char, CStr};
 use std::sync::Arc;
 
-pub struct ReisCatalog(Arc<Catalog>);
+pub struct ReisCatalog(Arc<Library>);
 
 #[repr(C)]
 pub struct ReisState {
@@ -32,7 +32,7 @@ pub extern "C" fn reis_catalog_open(path: *const c_char) -> *mut ReisCatalog {
     let p = unsafe { CStr::from_ptr(path) }
         .to_string_lossy()
         .to_string();
-    match Catalog::open(&p) {
+    match Library::open(&p) {
         Ok(c) => Box::into_raw(Box::new(ReisCatalog(Arc::new(c)))),
         Err(_) => std::ptr::null_mut(),
     }
@@ -181,10 +181,26 @@ pub extern "C" fn reis_lyrics_index_at(c: *const ReisCatalog, song: u32, pos_ms:
         .unwrap_or(-1)
 }
 
+/// Real-time engine (exact matching + position). Null if the library was
+/// built without the exact engine.
 #[no_mangle]
 pub extern "C" fn reis_engine_new(c: *const ReisCatalog) -> *mut Engine {
     let cat = unsafe { &*c }.0.clone();
+    if !cat.has_exact() {
+        return std::ptr::null_mut();
+    }
     Box::into_raw(Box::new(Engine::new(cat, EngineConfig::default())))
+}
+
+/// 1 if the library contains the engine: which = 0 exact, 1 semantic.
+#[no_mangle]
+pub extern "C" fn reis_catalog_has(c: *const ReisCatalog, which: u32) -> u8 {
+    let c = &unsafe { &*c }.0;
+    (if which == 0 {
+        c.has_exact()
+    } else {
+        c.has_semantic()
+    }) as u8
 }
 
 #[no_mangle]
@@ -250,5 +266,104 @@ pub extern "C" fn reis_engine_tick(e: *mut Engine, now_ms: f64, out: *mut ReisSt
             last_score: st.last_score,
             last_match_us: st.last_match_us,
         }
+    }
+}
+
+// ------------------------------------------------------------------ generic API
+// Any host (app, script, other language) can use the whole recogniser with
+// four calls: open library -> new recognizer -> recognize PCM (JSON) -> free.
+
+use crate::recognize::{Recognizer, RecognizerConfig};
+use std::ffi::CString;
+
+pub struct ReisRecognizer(Recognizer);
+
+/// Label (category) of a reference, e.g. "animaux/chien".
+#[no_mangle]
+pub extern "C" fn reis_ref_label(c: *const ReisCatalog, id: u32, out_len: *mut u32) -> *const u8 {
+    let c = &unsafe { &*c }.0;
+    put_str(
+        c.refs
+            .get(id as usize)
+            .map(|r| r.label.as_str())
+            .unwrap_or(""),
+        out_len,
+    )
+}
+
+/// Any metadata value of a reference as text ("" if absent). `key` is UTF-8, NUL-terminated.
+#[no_mangle]
+pub extern "C" fn reis_ref_meta(
+    c: *const ReisCatalog,
+    id: u32,
+    key: *const c_char,
+    out_len: *mut u32,
+) -> *const u8 {
+    let c = &unsafe { &*c }.0;
+    let k = unsafe { CStr::from_ptr(key) }.to_string_lossy();
+    put_str(
+        c.refs
+            .get(id as usize)
+            .and_then(|r| r.meta_str(&k))
+            .unwrap_or(""),
+        out_len,
+    )
+}
+
+#[no_mangle]
+pub extern "C" fn reis_recognizer_new(c: *const ReisCatalog) -> *mut ReisRecognizer {
+    let lib = unsafe { &*c }.0.clone();
+    match Recognizer::new(lib, RecognizerConfig::default()) {
+        Ok(r) => Box::into_raw(Box::new(ReisRecognizer(r))),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn reis_recognizer_free(r: *mut ReisRecognizer) {
+    if !r.is_null() {
+        unsafe { drop(Box::from_raw(r)) }
+    }
+}
+
+/// Recognize interleaved 16-bit PCM (channels are downmixed). Same result as reis_recognize_f32.
+#[no_mangle]
+pub extern "C" fn reis_recognize_i16(
+    r: *const ReisRecognizer,
+    pcm: *const i16,
+    frames: u32,
+    channels: u32,
+    rate: u32,
+) -> *mut c_char {
+    let ch = channels.max(1) as usize;
+    let s = unsafe { std::slice::from_raw_parts(pcm, frames as usize * ch) };
+    let mono: Vec<f32> = s
+        .chunks_exact(ch)
+        .map(|f| f.iter().map(|&v| v as f32).sum::<f32>() / (ch as f32 * 32768.0))
+        .collect();
+    reis_recognize_f32(r, mono.as_ptr(), mono.len() as u32, rate)
+}
+
+/// Recognize mono f32 PCM. Returns a NUL-terminated JSON string (see
+/// docs/API.md) to release with `reis_string_free`.
+#[no_mangle]
+pub extern "C" fn reis_recognize_f32(
+    r: *const ReisRecognizer,
+    pcm: *const f32,
+    frames: u32,
+    rate: u32,
+) -> *mut c_char {
+    let r = &unsafe { &*r }.0;
+    let x = unsafe { std::slice::from_raw_parts(pcm, frames as usize) };
+    let res = r.recognize(x, rate);
+    CString::new(r.to_json(&res).to_string_compact())
+        .unwrap_or_default()
+        .into_raw()
+}
+
+#[no_mangle]
+pub extern "C" fn reis_string_free(s: *mut c_char) {
+    if !s.is_null() {
+        unsafe { drop(CString::from_raw(s)) }
     }
 }

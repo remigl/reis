@@ -11,9 +11,9 @@
 //!             coming back resumes it and triggers an immediate verification.
 
 use crate::audio::{rms_dbfs, Resampler};
-use crate::catalog::Catalog;
 use crate::fingerprint::Fingerprinter;
 use crate::index::{match_hashes, MatchResult};
+use crate::library::Library;
 use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug)]
@@ -98,7 +98,7 @@ struct Lock {
 }
 
 pub struct Engine {
-    pub cat: Arc<Catalog>,
+    pub cat: Arc<Library>,
     fp: Fingerprinter,
     pub cfg: EngineConfig,
     rs: Option<Resampler>,
@@ -116,8 +116,11 @@ pub struct Engine {
 }
 
 impl Engine {
-    pub fn new(cat: Arc<Catalog>, cfg: EngineConfig) -> Self {
-        let fp = Fingerprinter::new(cat.params.query(cfg.query_density, cfg.query_fanout));
+    pub fn new(cat: Arc<Library>, cfg: EngineConfig) -> Self {
+        let params = cat
+            .params
+            .expect("the streaming engine needs a library with the exact engine");
+        let fp = Fingerprinter::new(params.query(cfg.query_density, cfg.query_fanout));
         Engine {
             cat,
             fp,
@@ -151,7 +154,7 @@ impl Engine {
     }
 
     fn sr(&self) -> f64 {
-        self.cat.params.sample_rate as f64
+        self.fp.p.sample_rate as f64
     }
 
     /// Push mono PCM. `clock_end_ms` = monotonic time of the end of this chunk.
@@ -159,7 +162,7 @@ impl Engine {
         if pcm.is_empty() {
             return;
         }
-        let out_rate = self.cat.params.sample_rate;
+        let out_rate = self.fp.p.sample_rate;
         if self.rs.as_ref().map(|r| r.in_rate) != Some(rate) {
             self.rs = Some(Resampler::new(rate, out_rate));
             self.buf.clear();
@@ -215,7 +218,7 @@ impl Engine {
     }
 
     fn offset_ms(&self, frames: i32) -> f64 {
-        frames as f64 * self.cat.params.hop as f64 * 1000.0 / self.sr()
+        frames as f64 * self.fp.p.hop as f64 * 1000.0 / self.sr()
     }
 
     fn position_at(&self, clock: f64) -> f64 {

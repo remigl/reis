@@ -1,98 +1,80 @@
 # Reis
 
-Reconnaissance musicale **100 % hors ligne** avec **paroles synchronisées**.
-On ouvre l'app → le micro écoute → le morceau est reconnu en ~2–3 s → jaquette,
-titre, artiste, album et paroles qui défilent à la bonne ligne.
+**Reconnaissance de sons 100 % hors ligne, à partir de ta propre bibliothèque.**
+Tu donnes un dossier de sons de référence (musiques, cris d'animaux, bruits,
+alarmes, jingles…). Reis en fait une bibliothèque d'empreintes, puis reconnaît
+ces sons dans un fichier ou au micro, sans Internet.
 
 ```text
-micro ─▶ 8 kHz ─▶ empreinte « constellation » ─▶ index local (mmap)
-                                   │ titre + position (±5 ms)
-        position = offset + temps écoulé, re-vérifiée toutes les 15 s
-                                   │
-         paroles (ligne / mot) · métadonnées · jaquette — même fichier .reis
+mes-sons/                          reis index mes-sons -o sons.reis
+├── animaux/chien/*.wav     ──▶    sons.reis  (un seul fichier : empreintes,
+├── animaux/chat/*.mp3                         métadonnées, paroles, jaquettes, modèle)
+├── maison/sonnette.wav
+└── musique/*.flac (+ .lrc)        reis recognize sons.reis inconnu.wav
+                                   ≈ similar: animaux/chien (score 0.71)
 ```
 
-## État
+Deux moteurs complémentaires, choisis et réglés par mesure (pas par mode) :
 
-| brique | état |
+| | moteur **exact** | moteur **sémantique** |
+|---|---|---|
+| question | *est-ce cet enregistrement ?* | *est-ce ce genre de son ?* |
+| technique | constellation de pics temps-fréquence (type Shazam) | réseau de neurones audio EfficientAT (2023), embeddings + plus proches voisins |
+| idéal pour | morceaux, jingles, annonces → **position** et **paroles synchronisées** | animaux, bruits, alarmes → reconnaît un **autre** chien que ceux de la bibliothèque |
+| mesuré | 99 % à 10 s, 90 % à 5 s, position ±5 ms, 0 faux positif | 88,8 % de bonnes catégories (ESC-50, 40 classes), 75,9 % via haut-parleur |
+
+Plus un filet de sécurité : les **527 classes AudioSet** du réseau
+(« absent de ta bibliothèque, mais ressemble à : Cat 66 % »).
+
+## En 5 minutes
+
+1. Télécharge `reis-cli-…` dans la [release](https://github.com/remigl/reis/releases)
+   (exécutable + modèles) et, pour les formats autres que WAV,
+   [ffmpeg](https://ffmpeg.org).
+2. Range tes sons : **un sous-dossier = une catégorie**.
+3. Construis la bibliothèque, puis reconnais un fichier, puis écoute au micro :
+   ```bash
+   reis index mes-sons/ -o sons.reis
+   reis recognize sons.reis enregistrement.wav
+   ffmpeg -f dshow -i audio="Microphone" -ac 1 -ar 16000 -f s16le - | reis listen sons.reis   # Windows
+   arecord -f S16_LE -r 16000 -c 1 -t raw | reis listen sons.reis                             # Linux
+   ```
+4. Ou copie `sons.reis` sur ton téléphone et ouvre l'app (APK dans la release).
+
+## Documentation
+
+| | |
 |---|---|
-| Cœur Rust (`core/`) : DSP, empreinte, index, matching, position, moteur temps réel, paroles, catalogue, ABI C | ✅ fonctionnel, testé, benchmarké — **0 dépendance**, `.so` de 410 Ko |
-| CLI (`reis`) : build, id, bench, simulate, listen (micro réel via ffmpeg), scale | ✅ |
-| Benchmarks reproductibles (landmarks vs Chromaprint, 10 conditions × 4 durées, moteur, 30 k titres) | ✅ `docs/BENCHMARKS.md` |
-| Index builder (bibliothèque → tags/jaquettes → LRCLIB → `.reis`) | ✅ scripts ; testé sur le corpus synthétique, pas sur un vrai dump LRCLIB |
-| App Flutter (`app/flutter/`) : écoute auto, isolate moteur, paroles fluides, réglages persistés | ⚠️ code complet mais **non compilé** : pas de SDK Flutter dans l'environnement de développement |
-
-## Résultats clés (détails et limites : [docs/BENCHMARKS.md](docs/BENCHMARKS.md))
-
-Mesuré sur un corpus **synthétique** (aucun enregistrement réel accessible) et
-un CPU x86 ; téléphone non mesuré.
-
-* **Landmarks retenus, Chromaprint écarté** : à 10 s via haut-parleur,
-  100 % contre 5 % ; à 2 s, 55 % contre 0 % (Chromaprint ne produit aucune
-  empreinte).
-* Défaut, règle stricte : **top-1 55 / 76 / 90 / 99 %** à 2 / 3 / 5 / 10 s
-  toutes conditions confondues, **0 faux positif** (800 négatifs) et 0 mauvais titre.
-* Moteur réel simulé : résultat en **2,0–3,5 s** (p50), 20/20 même haut-parleur +
-  bruit à 5 dB ; position à **7–10 ms** ; pause détectée 20/20 ; 0 faux
-  verrouillage sur 60 morceaux hors catalogue écoutés 55 s.
-* 30 000 titres : précision identique (79,8 % vs 80,0 %), 55 ms pour 5 s d'audio.
-* Taille : **≈ 89 Ko par titre** tout compris → **≈ 22 000 titres sous 2 Go**
-  (≈ 32 000 en préréglage compact).
-
-## Important : d'où vient le catalogue
-
-AcoustID ne peut pas servir de base de reconnaissance au micro : ses empreintes
-(Chromaprint) ne survivent pas au trajet haut-parleur → micro (mesuré
-ci-dessus), et l'empreinte landmark se calcule **à partir de l'audio**. Le
-catalogue se construit donc depuis une bibliothèque audio (la tienne, ou un
-fonds dont on a les droits). MusicBrainz / AcoustID servent aux métadonnées
-(via Picard), LRCLIB aux paroles. Licences : [docs/DATA_LICENSES.md](docs/DATA_LICENSES.md)
-— les paroles et jaquettes ne sont pas redistribuables par défaut.
-
-## Démarrage
-
-```bash
-cargo build --release                       # core + CLI, aucun téléchargement de crate
-cargo test --release                        # tests unitaires + bout-en-bout
-
-# Catalogue depuis ta musique (ffmpeg requis pour MP3/FLAC/…)
-python3 index-builder/scan_library.py ~/Music build/
-python3 index-builder/lrclib_extract.py lrclib-dump.sqlite3 build/meta.tsv   # facultatif
-target/release/reis build --meta build/meta.tsv --out catalog.reis
-
-# Identifier un fichier
-target/release/reis id catalog.reis extrait.mp3
-
-# Écoute en direct au micro avec paroles dans le terminal
-#   Linux :   arecord -f S16_LE -r 16000 -c 1 -t raw | target/release/reis listen catalog.reis
-#   Windows : ffmpeg -f dshow -i audio="Microphone (…)" -ac 1 -ar 16000 -f s16le - | reis listen catalog.reis
-```
-
-App Flutter :
-
-```bash
-scripts/setup_flutter.sh        # génère android/ios/desktop + permission micro
-scripts/build_android.sh        # cargo-ndk → jniLibs
-cd app/flutter && flutter run   # au 1er lancement : importer catalog.reis
-```
+| [Guide d'utilisation](docs/GUIDE.md) | préparer les sons, toutes les commandes, seuils, recettes (musique + paroles, oiseaux, maison…), dépannage |
+| [Comment ça marche](docs/CONCEPTS.md) | les deux empreintes, la décision, la calibration automatique, le temps réel |
+| [Intégrer Reis](docs/API.md) | ABI C (Python, C#, Kotlin…), format JSON, bibliothèque Rust, Flutter |
+| [Architecture](docs/ARCHITECTURE.md) | modules, flux de données, choix techniques, **points d'extension** |
+| [Formats](docs/FORMATS.md) | fichiers `.reis` et `.rnm`, octet par octet |
+| [Modèles](docs/MODELS.md) | modèles fournis, vérification contre PyTorch, convertir un autre réseau |
+| [Benchmarks](docs/BENCHMARKS.md) | toutes les mesures, leurs conditions et leurs limites |
+| [Données et licences](docs/DATA_LICENSES.md) | ce qui est redistribuable, et ce qui ne l'est pas |
+| [Contribuer](CONTRIBUTING.md) | compiler, tester, ajouter un moteur ou un modèle |
 
 ## Structure
 
 ```text
-core/            Rust : audio, fft, fingerprint, index, engine, lyrics, catalog, ffi
-cli/             outil `reis` (build, id, bench, simulate, listen, scale, diag)
-app/flutter/     UI (remplaçable : elle ne parle au moteur que via l'ABI C)
-index-builder/   construction du catalogue (outils lourds, hors app)
-benchmarks/      corpus, dégradations, Chromaprint, calibration, simulation + résultats
-scripts/         builds Android/desktop, reproduction des benchmarks
-docs/            ARCHITECTURE, BENCHMARKS, DATA_LICENSES
+core/          bibliothèque Rust sans dépendance : empreintes, réseau de neurones, index, décision, ABI C
+cli/           l'outil `reis`
+app/flutter/   application Android / Windows / Linux (ne parle au moteur que via l'ABI C)
+tools/         conversion des modèles, paroles LRCLIB, exemple Python
+benchmarks/    corpus, dégradations réalistes, protocoles ESC-50 et musique, résultats
+docs/          documentation
 ```
 
-## Prochaines étapes
+## État et limites
 
-1. Refaire `scripts/reproduce_benchmarks.sh` sur une **vraie** bibliothèque
-   (quelques centaines de titres) et réajuster la règle d'acceptation.
-2. Compiler l'app Flutter, mesurer CPU / RAM / batterie sur un vrai téléphone.
-3. Benchmarker une empreinte neuronale légère en comparaison.
+- Cœur, CLI, benchmarks : fonctionnels et testés (`cargo test`). Le runtime
+  neuronal reproduit PyTorch (cosinus 0,999998).
+- Mesures sur ESC-50 (vrais sons) et sur un corpus musical **synthétique** ;
+  pas encore sur une vraie bibliothèque musicale ni sur téléphone.
+- App Flutter compilée par la CI (APK + Windows) mais jamais testée sur un vrai
+  appareil.
+- Aucun catalogue public n'est fourni : il n'existe pas de base libre de
+  musique commerciale (voir [DATA_LICENSES.md](docs/DATA_LICENSES.md)).
 
-Licence du code : MIT ou Apache-2.0, au choix.
+Licence du code : MIT ou Apache-2.0. Modèles EfficientAT : MIT.
