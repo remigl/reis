@@ -39,7 +39,9 @@ Plus un filet de sécurité : les **527 classes AudioSet** du réseau
    ffmpeg -f dshow -i audio="Microphone" -ac 1 -ar 16000 -f s16le - | reis listen sons.reis   # Windows
    arecord -f S16_LE -r 16000 -c 1 -t raw | reis listen sons.reis                             # Linux
    ```
-4. Ou copie `sons.reis` sur ton téléphone et ouvre l'app (APK dans la release).
+4. **Ou directement sur le téléphone** : installe l'APK de la release, touche
+   *Créer ma bibliothèque*, coche tes dossiers de musiques ou de sons. L'app
+   crée les empreintes elle-même, hors ligne.
 
 ## Documentation
 
@@ -72,8 +74,8 @@ docs/          documentation
   neuronal reproduit PyTorch (cosinus 0,999998).
 - Mesures sur ESC-50 (vrais sons) et sur un corpus musical **synthétique** ;
   pas encore sur une vraie bibliothèque musicale ni sur téléphone.
-- App Flutter compilée par la CI (APK + Windows) mais jamais testée sur un vrai
-  appareil.
+- App Flutter compilée par la CI (APK + Windows), création de bibliothèque sur
+  le téléphone comprise, mais jamais testée sur un vrai appareil.
 - Aucun catalogue public n'est fourni : il n'existe pas de base libre de
   musique commerciale (voir [DATA_LICENSES.md](docs/DATA_LICENSES.md)).
 

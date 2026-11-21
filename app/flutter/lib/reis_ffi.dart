@@ -232,3 +232,89 @@ class ReisEngine {
     calloc.free(_buf);
   }
 }
+
+// ------------------------------------------------------------------ building a library on the device
+
+final _bNew = _lib.lookupFunction<Pointer<Void> Function(Pointer<Utf8>, Pointer<Uint8>, IntPtr),
+    Pointer<Void> Function(Pointer<Utf8>, Pointer<Uint8>, int)>('reis_builder_new');
+final _bAddI16 = _lib.lookupFunction<
+    Int32 Function(Pointer<Void>, Pointer<Int16>, Uint32, Uint32, Uint32, Pointer<Utf8>, Pointer<Uint8>, IntPtr),
+    int Function(Pointer<Void>, Pointer<Int16>, int, int, int, Pointer<Utf8>, Pointer<Uint8>, int)>('reis_builder_add_i16');
+final _bAddFile = _lib.lookupFunction<Int32 Function(Pointer<Void>, Pointer<Utf8>, Pointer<Utf8>, Pointer<Uint8>, IntPtr),
+    int Function(Pointer<Void>, Pointer<Utf8>, Pointer<Utf8>, Pointer<Uint8>, int)>('reis_builder_add_file');
+final _bCount = _lib.lookupFunction<Uint32 Function(Pointer<Void>), int Function(Pointer<Void>)>('reis_builder_count');
+final _bFinish = _lib.lookupFunction<Int32 Function(Pointer<Void>, Pointer<Utf8>), int Function(Pointer<Void>, Pointer<Utf8>)>('reis_builder_finish');
+final _bFree = _lib.lookupFunction<Void Function(Pointer<Void>), void Function(Pointer<Void>)>('reis_builder_free');
+final _lastError = _lib.lookupFunction<Pointer<Utf8> Function(), Pointer<Utf8> Function()>('reis_last_error');
+
+String reisLastError() {
+  final p = _lastError();
+  final s = p.toDartString();
+  _strFree(p);
+  return s;
+}
+
+/// Creates a .reis library from audio decoded by the host. Not thread-safe:
+/// use it from a single (worker) isolate.
+class ReisLibraryBuilder {
+  Pointer<Void> _ptr;
+  ReisLibraryBuilder._(this._ptr);
+
+  /// [configJson]: same keys as reis.json, e.g. {"engines":["exact","semantic"]}.
+  /// [model]: .rnm bytes, required for the semantic engine.
+  static ReisLibraryBuilder create(String configJson, Uint8List? model) {
+    final c = configJson.toNativeUtf8();
+    final m = model == null ? nullptr : malloc<Uint8>(model.length);
+    if (model != null) m.asTypedList(model.length).setAll(0, model);
+    final p = _bNew(c, m, model?.length ?? 0);
+    malloc.free(c);
+    if (model != null) malloc.free(m);
+    if (p == nullptr) throw StateError(reisLastError());
+    return ReisLibraryBuilder._(p);
+  }
+
+  int get count => _bCount(_ptr);
+
+  /// Mono 16-bit PCM. Returns the reference id; throws on error.
+  int addPcm(Int16List pcm, int rate, Map<String, Object?> info, Uint8List? art) {
+    final buf = malloc<Int16>(pcm.length);
+    buf.asTypedList(pcm.length).setAll(0, pcm);
+    final j = jsonEncode(info).toNativeUtf8();
+    final a = art == null ? nullptr : malloc<Uint8>(art.length);
+    if (art != null) a.asTypedList(art.length).setAll(0, art);
+    final id = _bAddI16(_ptr, buf, pcm.length, 1, rate, j, a, art?.length ?? 0);
+    malloc.free(buf);
+    malloc.free(j);
+    if (art != null) malloc.free(a);
+    if (id < 0) throw StateError(reisLastError());
+    return id;
+  }
+
+  /// File decoded by the core (WAV natively, other formats need ffmpeg: desktop).
+  int addFile(String path, Map<String, Object?> info, Uint8List? art) {
+    final p = path.toNativeUtf8();
+    final j = jsonEncode(info).toNativeUtf8();
+    final a = art == null ? nullptr : malloc<Uint8>(art.length);
+    if (art != null) a.asTypedList(art.length).setAll(0, art);
+    final id = _bAddFile(_ptr, p, j, a, art?.length ?? 0);
+    malloc.free(p);
+    malloc.free(j);
+    if (art != null) malloc.free(a);
+    if (id < 0) throw StateError(reisLastError());
+    return id;
+  }
+
+  /// Writes the library and releases the builder.
+  void finish(String outPath) {
+    final o = outPath.toNativeUtf8();
+    final r = _bFinish(_ptr, o);
+    malloc.free(o);
+    _ptr = nullptr;
+    if (r != 0) throw StateError(reisLastError());
+  }
+
+  void dispose() {
+    if (_ptr != nullptr) _bFree(_ptr);
+    _ptr = nullptr;
+  }
+}

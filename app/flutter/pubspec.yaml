@@ -1,7 +1,7 @@
 name: reis
 description: Reconnaissance musicale 100 % hors ligne avec paroles synchronisées.
 publish_to: none
-version: 0.1.0+1
+version: 0.3.0+3
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
@@ -23,6 +23,9 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
-  # Optional: ship a small catalog inside the APK (copied on first launch).
-  # assets:
+  assets:
+    # neural model used to build "types de sons" libraries on the device;
+    # downloaded from the models-v1 release by CI / scripts/setup_flutter.sh
+    - assets/models/
+  # Optional: ship a small catalog inside the APK (copied on first launch):
   #   - assets/catalog.reis

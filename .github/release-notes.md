@@ -1,19 +1,25 @@
-**Reis v0.2.0** — reconnaissance de sons 100 % hors ligne à partir de ta propre bibliothèque de références : musiques, cris d'animaux, bruits divers.
+**Reis v0.3.0** — l'app crée elle-même ta bibliothèque d'empreintes, **sur le téléphone**, à partir de tes musiques et de tes sons. Plus besoin d'ordinateur.
 
-Tu fournis un dossier de sons de référence, Reis en fait une bibliothèque d'empreintes, puis reconnaît ces sons dans un fichier ou au micro.
+### Dans l'app
+1. Premier lancement → **Créer ma bibliothèque** (ou, plus tard, bouton 🎵 « Bibliothèque »).
+2. Choisis ce que Reis doit reconnaître :
+   - **Musiques** : le morceau exact, sa position et ses paroles synchronisées (si un `.lrc` est à côté du fichier ou ajouté avec lui) ;
+   - **Types de sons** : le même genre de son, même un autre enregistrement ; chaque dossier devient une catégorie ;
+   - **Les deux**.
+3. Coche les dossiers de ton téléphone (ou ajoute des fichiers), puis **Créer les empreintes**. Tout se fait hors ligne.
 
+Tous les formats lisibles par Android sont acceptés (MP3, AAC/M4A, FLAC, OGG, Opus, WAV…).
+
+### Fichiers
 | fichier | contenu |
 |---|---|
-| `reis-cli-v0.2.0-windows-x64.zip` / `-linux-x86_64.tar.gz` | outil `reis` + modèles neuronaux, prêt à l'emploi |
-| `reis-v0.2.0-android.apk` | app Android (importe une bibliothèque `.reis`) |
-| `reis-v0.2.0-windows-x64.zip` | app Windows |
-| `mn10_as.rnm`, `mn04_as.rnm` | modèles EfficientAT (MIT, AudioSet) convertis pour Reis |
+| `reis-v0.3.0-android.apk` | app Android 7.0+ (modèle neuronal inclus) |
+| `reis-v0.3.0-windows-x64.zip` | app Windows |
+| `reis-cli-v0.3.0-…` | outil `reis` + modèles, pour construire de grosses bibliothèques sur ordinateur |
+| `mn10_as.rnm`, `mn04_as.rnm` | modèles EfficientAT (MIT) |
 
-Démarrage rapide :
-```bash
-reis index mes-sons/ -o sons.reis      # un sous-dossier = une catégorie
-reis recognize sons.reis enregistrement.wav
-```
-Documentation : `docs/README.md`. Mesures : `docs/BENCHMARKS.md`.
-
-Limites : APK signé avec la clé de debug ; app jamais testée sur un vrai téléphone.
+### Limites
+- APK signé avec la clé de debug (installation manuelle).
+- Fonction jamais testée sur un vrai téléphone : merci de remonter les problèmes.
+- Paroles : seulement les `.lrc` lisibles par l'app (choisis-les avec les sons dans « Ajouter des fichiers » si elles ne sont pas trouvées automatiquement).
+- La bibliothèque est reconstruite entièrement à chaque fois (pas encore d'ajout incrémental).

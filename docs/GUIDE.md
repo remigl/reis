@@ -402,18 +402,56 @@ Dart/Flutter : voir [API.md](API.md).
 
 ## 10. L'application mobile / Windows
 
-1. Construis ta bibliothèque sur ordinateur (`reis index …`).
-2. Installe l'APK / dézippe l'app Windows depuis la release.
-3. Premier lancement : **Importer un catalogue** → choisis ton `.reis`.
-4. L'écoute démarre toute seule :
-   - bibliothèque **exact** : jaquette, titre, paroles synchronisées ;
-   - bibliothèque **sémantique** : le nom du son détecté, en grand, et les
-     catégories proches.
+### Créer la bibliothèque directement sur le téléphone
+
+1. Installe l'APK de la release (Android 7.0 ou plus récent).
+2. Premier lancement : **Créer ma bibliothèque**. Plus tard : bouton
+   **Bibliothèque** (icône 🎵 en haut à droite) → *Créer une nouvelle bibliothèque*.
+3. Choisis ce que Reis doit reconnaître :
+
+   | choix | moteurs | pour |
+   |---|---|---|
+   | **Musiques** | exact | le morceau précis, sa position, ses paroles synchronisées ; rapide (≈ 0,1 s par morceau sur PC) |
+   | **Types de sons** | sémantique | un autre chien, une autre sonnette… ; **chaque dossier = une catégorie** |
+   | **Les deux** | exact + sémantique | bibliothèques mixtes ; plus long sur de longues musiques |
+
+4. Coche les **dossiers** du téléphone à inclure (liste fournie par Android :
+   Music, Download, Recordings, WhatsApp Audio…) et/ou **ajoute des
+   fichiers** (avec une catégorie). Les `.lrc` choisis en même temps qu'un
+   fichier deviennent ses paroles ; un `.lrc` posé à côté du fichier est
+   aussi utilisé quand Android permet de le lire.
+5. **Créer les empreintes** : barre de progression, temps restant, bouton
+   « Arrêter et garder ce qui est fait ». L'ancienne bibliothèque reste
+   active tant que la nouvelle n'est pas terminée.
+
+Formats : tout ce que lit le téléphone (MP3, AAC/M4A, FLAC, OGG, Opus, WAV…),
+décodé par Android (MediaCodec). Titre, artiste, album et pochette viennent
+des tags du fichier (MediaStore). Le modèle neuronal (10 Mo) est inclus dans
+l'app. Tout reste sur le téléphone.
+
+Sur **Windows**, le même écran accepte des fichiers WAV, ou tous formats si
+ffmpeg est installé.
+
+### Importer une bibliothèque construite sur ordinateur
+
+Pour de très grosses bibliothèques, ou pour ajouter des paroles LRCLIB :
+`reis index …` sur ordinateur, copie le `.reis` sur le téléphone, puis
+**Bibliothèque → Importer un fichier .reis**.
+
+### Écouter
+
+L'écoute démarre toute seule :
+- bibliothèque **Musiques** : jaquette, titre, paroles synchronisées ;
+- bibliothèque **Types de sons** : le nom du son détecté, en grand, et les
+  catégories proches ; un son absent de la bibliothèque affiche sa classe
+  AudioSet la plus probable.
 
 Réglages des paroles : bouton `Aa` (police, taille, gras, espacements,
 alignement, couleur, contraste), conservés après redémarrage.
 
----
+Limites actuelles : la bibliothèque est reconstruite entièrement (pas d'ajout
+incrémental) ; APK signé avec la clé de debug ; pas encore testée sur un vrai
+téléphone.
 
 ## 11. Problèmes fréquents
 

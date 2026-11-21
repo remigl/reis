@@ -145,6 +145,32 @@ std::fs::write("sons.reis", b.finish())?;
 `LibraryBuilder::prepare(&samples, rate)` accepte aussi de l'audio déjà en
 mémoire.
 
+### Construire une bibliothèque depuis une app
+
+Pour créer la bibliothèque sur l'appareil (l'hôte décode l'audio lui-même, par
+exemple avec MediaCodec sur Android) :
+
+```c
+void*  reis_builder_new(const char* config_json, const uint8_t* model, size_t model_len);
+       // config_json : mêmes clés que reis.json, ex. {"engines":["exact","semantic"],"augment":["speaker"]}
+       // model : octets d'un .rnm (obligatoire pour le moteur sémantique), NULL sinon ; NULL = erreur
+int32_t reis_builder_add_i16(void*, const int16_t* pcm, uint32_t frames, uint32_t channels, uint32_t rate,
+                             const char* info_json, const uint8_t* art, size_t art_len);
+       // info_json : {"name": "...", "label": "...", "file": "...", "meta": {...}, "lyrics": "[00:01.00]..."}
+       // art : petite image JPEG/WebP/PNG ou NULL ; renvoie l'identifiant, -1 = erreur
+int32_t reis_builder_add_file(void*, const char* path, const char* info_json, const uint8_t* art, size_t art_len);
+       // WAV natif ; autres formats via ffmpeg (ordinateur)
+uint32_t reis_builder_count(const void*);
+int32_t  reis_builder_finish(void*, const char* out_path);   // écrit (fichier temporaire + renommage) et libère ; 0 = ok
+void     reis_builder_free(void*);                           // abandon
+char*    reis_last_error(void);                              // message de la dernière erreur (reis_string_free)
+```
+
+Le calcul (empreintes, réseau de neurones) se fait dans `reis_builder_add_*` :
+appeler ces fonctions hors du fil de l'interface. L'app Flutter le fait dans un
+isolate dédié (`app/flutter/lib/library_builder.dart`) et décode l'audio dans
+le code natif Android (`app/flutter/android_src/MainActivity.kt`).
+
 ## 3. Moteur de flux (micro)
 
 Pour suivre un morceau en temps réel (bibliothèque avec moteur exact) :

@@ -13,3 +13,4 @@ __pycache__/
 /models/*.rnm
 /models/*.bin
 /models/*.log
+/app/flutter/assets/models/*.rnm

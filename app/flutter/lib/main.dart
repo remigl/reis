@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'build_screen.dart';
 import 'engine_service.dart';
 import 'lyrics_view.dart';
 import 'reis_ffi.dart';
@@ -46,49 +47,108 @@ class _CatalogGateState extends State<CatalogGate> {
     _locate();
   }
 
-  Future<File> _target() async => File('${(await getApplicationSupportDirectory()).path}/catalog.reis');
+  Future<Directory> _dir() async => getApplicationSupportDirectory();
+  Future<File> _pointer() async => File('${(await _dir()).path}/current_library.txt');
 
+  /// The active library: path stored in current_library.txt, else catalog.reis,
+  /// else a library bundled in the app assets.
   Future<void> _locate() async {
-    final f = await _target();
-    if (!await f.exists()) {
+    String? path;
+    final ptr = await _pointer();
+    if (await ptr.exists()) {
+      final p = (await ptr.readAsString()).trim();
+      if (p.isNotEmpty && await File(p).exists()) path = p;
+    }
+    final legacy = File('${(await _dir()).path}/catalog.reis');
+    if (path == null && await legacy.exists()) path = legacy.path;
+    if (path == null) {
       try {
         final data = await rootBundle.load('assets/catalog.reis');
-        await f.writeAsBytes(data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes), flush: true);
+        await legacy.writeAsBytes(data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes), flush: true);
+        path = legacy.path;
       } catch (_) {/* no bundled catalog */}
     }
     setState(() {
       _busy = false;
-      _path = f.existsSync() ? f.path : null;
+      _path = path;
     });
   }
 
+  Future<String> _newPath() async => '${(await _dir()).path}/library-${DateTime.now().millisecondsSinceEpoch}.reis';
+
+  /// Switch to a freshly written library and forget the previous one.
+  Future<void> _activate(String path) async {
+    final old = _path;
+    await (await _pointer()).writeAsString(path, flush: true);
+    setState(() {
+      _path = path;
+      _error = null;
+    });
+    if (old != null && old != path) {
+      // the previous library may still be mapped for a moment: delete it later if needed
+      Future.delayed(const Duration(seconds: 2), () async {
+        try {
+          await File(old).delete();
+        } catch (_) {}
+      });
+    }
+  }
+
+  Future<void> _create() async {
+    final out = await _newPath();
+    final ok = await Navigator.push<bool>(context, MaterialPageRoute(builder: (_) => BuildScreen(outPath: out)));
+    if (ok == true && await File(out).exists()) await _activate(out);
+  }
+
   Future<void> _import() async {
-    final r = await FilePicker.platform.pickFiles(dialogTitle: 'Choisir un catalogue .reis');
+    final r = await FilePicker.platform.pickFiles(dialogTitle: 'Choisir une bibliothèque .reis');
     final src = r?.files.single.path;
     if (src == null) return;
     setState(() => _busy = true);
-    final f = await _target();
-    await File(src).copy(f.path);
-    final ok = ReisCatalog.open(f.path);
+    final out = await _newPath();
+    await File(src).copy(out);
+    final ok = ReisCatalog.open(out);
+    setState(() => _busy = false);
     if (ok == null) {
-      await f.delete();
-      setState(() {
-        _busy = false;
-        _error = 'Ce fichier n\'est pas un catalogue Reis valide.';
-      });
+      await File(out).delete();
+      setState(() => _error = 'Ce fichier n\'est pas une bibliothèque Reis valide (ou date d\'une ancienne version).');
       return;
     }
     ok.dispose();
-    setState(() {
-      _busy = false;
-      _path = f.path;
-    });
+    await _activate(out);
   }
+
+  void _libraryMenu() => showModalBottomSheet<void>(
+        context: context,
+        showDragHandle: true,
+        builder: (c) => SafeArea(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            ListTile(
+              leading: const Icon(Icons.fingerprint),
+              title: const Text('Créer une nouvelle bibliothèque'),
+              subtitle: const Text('à partir des sons et musiques de cet appareil'),
+              onTap: () {
+                Navigator.pop(c);
+                _create();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.file_open),
+              title: const Text('Importer un fichier .reis'),
+              subtitle: const Text('construit sur ordinateur avec « reis index »'),
+              onTap: () {
+                Navigator.pop(c);
+                _import();
+              },
+            ),
+          ]),
+        ),
+      );
 
   @override
   Widget build(BuildContext context) {
     if (_busy) return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    if (_path != null) return HomeScreen(catalogPath: _path!);
+    if (_path != null) return HomeScreen(key: ValueKey(_path), catalogPath: _path!, onLibraryMenu: _libraryMenu);
     return Scaffold(
       body: Center(
         child: Padding(
@@ -96,13 +156,15 @@ class _CatalogGateState extends State<CatalogGate> {
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             const Icon(Icons.library_music_outlined, size: 64),
             const SizedBox(height: 16),
-            const Text('Aucun catalogue installé', style: TextStyle(fontSize: 20)),
+            const Text('Aucune bibliothèque', style: TextStyle(fontSize: 20)),
             const SizedBox(height: 8),
-            const Text('Reis reconnaît la musique sans Internet grâce à un catalogue local (.reis). '
-                'Importe-le une seule fois.', textAlign: TextAlign.center),
+            const Text('Reis reconnaît les sons que tu lui as appris, sans Internet. '
+                'Donne-lui tes musiques ou tes sons : il en crée les empreintes, ici, sur le téléphone.', textAlign: TextAlign.center),
             if (_error != null) Padding(padding: const EdgeInsets.only(top: 12), child: Text(_error!, style: const TextStyle(color: Colors.redAccent))),
             const SizedBox(height: 20),
-            FilledButton.icon(onPressed: _import, icon: const Icon(Icons.file_open), label: const Text('Importer un catalogue')),
+            FilledButton.icon(onPressed: _create, icon: const Icon(Icons.fingerprint), label: const Text('Créer ma bibliothèque')),
+            const SizedBox(height: 8),
+            TextButton.icon(onPressed: _import, icon: const Icon(Icons.file_open), label: const Text('Importer un fichier .reis')),
           ]),
         ),
       ),
@@ -112,7 +174,8 @@ class _CatalogGateState extends State<CatalogGate> {
 
 class HomeScreen extends StatefulWidget {
   final String catalogPath;
-  const HomeScreen({super.key, required this.catalogPath});
+  final VoidCallback onLibraryMenu;
+  const HomeScreen({super.key, required this.catalogPath, required this.onLibraryMenu});
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
@@ -178,6 +241,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   setState(() => _song = null);
                 }),
               IconButton(tooltip: 'Paroles', icon: const Icon(Icons.text_fields), onPressed: _settings),
+              IconButton(tooltip: 'Bibliothèque', icon: const Icon(Icons.library_music), onPressed: widget.onLibraryMenu),
             ]),
           ),
         ]),

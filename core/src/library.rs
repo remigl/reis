@@ -355,50 +355,42 @@ impl LibraryBuilder {
     }
 
     /// Add one reference. Returns its id.
+    /// Add one reference described by a [`SourceItem`] (sidecar files read from disk).
     pub fn add(&mut self, item: &SourceItem, prep: Prepared) -> u32 {
+        let file = item.path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
+        let lyrics = item.lyrics.as_ref().and_then(|p| std::fs::read_to_string(p).ok());
+        let art = item.art.as_ref().and_then(|p| crate::decode::thumbnail(p, self.cfg.artwork_px));
+        self.add_parts(&item.name, &item.label, &file, &item.meta, lyrics.as_deref(), art, prep)
+    }
+
+    /// Add one reference from in-memory parts (used by apps: no file system
+    /// layout needed). `lyrics` is LRC text, `art` an already small image.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_parts(&mut self, name: &str, label: &str, file: &str, meta: &[(String, Json)], lyrics: Option<&str>, art: Option<Vec<u8>>, prep: Prepared) -> u32 {
         let id = self.refs.len() as u32;
         if self.cfg.has("exact") {
             self.exact.add(id, &prep.exact);
         }
         self.sem.add(id, &prep.semantic);
         self.audio_s += prep.duration_s;
+        let label = if label.is_empty() { name } else { label };
         let mut r = vec![
-            ("name".to_string(), json::s(&item.name)),
-            ("label".to_string(), json::s(&item.label)),
-            (
-                "file".to_string(),
-                json::s(
-                    &item
-                        .path
-                        .file_name()
-                        .map(|f| f.to_string_lossy().to_string())
-                        .unwrap_or_default(),
-                ),
-            ),
-            (
-                "duration".to_string(),
-                json::n((prep.duration_s * 1000.0).round() / 1000.0),
-            ),
+            ("name".to_string(), json::s(name)),
+            ("label".to_string(), json::s(label)),
+            ("file".to_string(), json::s(file)),
+            ("duration".to_string(), json::n((prep.duration_s * 1000.0).round() / 1000.0)),
         ];
-        if !item.meta.is_empty() {
-            r.push(("meta".into(), Json::Obj(item.meta.clone())));
+        if !meta.is_empty() {
+            r.push(("meta".into(), Json::Obj(meta.to_vec())));
         }
-        if let Some(l) = item
-            .lyrics
-            .as_ref()
-            .and_then(|p| std::fs::read_to_string(p).ok())
-        {
-            let lines: Vec<Line> = lyrics::parse_lrc(&l);
+        if let Some(l) = lyrics {
+            let lines: Vec<Line> = lyrics::parse_lrc(l);
             if !lines.is_empty() {
                 r.push(("lyrics".into(), json::n(self.lyrc.len() as f64)));
                 self.lyrc.extend(lyrics::encode(&lines));
             }
         }
-        if let Some(img) = item
-            .art
-            .as_ref()
-            .and_then(|p| crate::decode::thumbnail(p, self.cfg.artwork_px))
-        {
+        if let Some(img) = art.filter(|a| !a.is_empty()) {
             let n = self.art.len() as u32;
             let aid = *self.art_ix.entry(img.clone()).or_insert(n);
             if aid == n {
@@ -406,8 +398,8 @@ impl LibraryBuilder {
             }
             r.push(("art".into(), json::n(aid as f64)));
         }
-        if !self.labels.contains(&item.label) {
-            self.labels.push(item.label.clone());
+        if !self.labels.iter().any(|l| l == label) {
+            self.labels.push(label.to_string());
         }
         self.refs.push(Json::Obj(r));
         id

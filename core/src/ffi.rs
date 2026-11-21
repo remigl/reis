@@ -367,3 +367,140 @@ pub extern "C" fn reis_string_free(s: *mut c_char) {
         unsafe { drop(CString::from_raw(s)) }
     }
 }
+
+// ------------------------------------------------------------------ building on the device
+// Lets an app create a library from audio it decoded itself (e.g. Android
+// MediaCodec), without ffmpeg nor a desktop computer.
+//
+//   b = reis_builder_new("{\"engines\":[\"exact\"]}", model, model_len)
+//   reis_builder_add_i16(b, pcm, frames, rate, "{\"name\":…,\"label\":…,\"meta\":{…},\"lyrics\":\"[00:01.00]…\"}", art, art_len)
+//   reis_builder_finish(b, "/path/library.reis")   // also frees b
+
+use crate::json::Json;
+use crate::library::{LibraryBuilder, LibraryConfig};
+use std::cell::RefCell;
+
+thread_local! {
+    static LAST_ERROR: RefCell<String> = const { RefCell::new(String::new()) };
+}
+
+fn set_error(e: impl Into<String>) {
+    LAST_ERROR.with(|l| *l.borrow_mut() = e.into());
+}
+
+/// Last error message of this thread (NUL-terminated, free with reis_string_free).
+#[no_mangle]
+pub extern "C" fn reis_last_error() -> *mut c_char {
+    CString::new(LAST_ERROR.with(|l| l.borrow().clone())).unwrap_or_default().into_raw()
+}
+
+pub struct ReisBuilder(LibraryBuilder);
+
+fn cstr(p: *const c_char) -> String {
+    if p.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(p) }.to_string_lossy().to_string()
+    }
+}
+
+/// `config_json`: same keys as reis.json (engines, exact, semantic, augment…), may be NULL.
+/// `model`: bytes of a .rnm file, required when the semantic engine is enabled.
+#[no_mangle]
+pub extern "C" fn reis_builder_new(config_json: *const c_char, model: *const u8, model_len: usize) -> *mut ReisBuilder {
+    let mut cfg = LibraryConfig::default();
+    let txt = cstr(config_json);
+    if !txt.trim().is_empty() {
+        match Json::parse(&txt).and_then(|j| cfg.apply_json(&j)) {
+            Ok(()) => {}
+            Err(e) => {
+                set_error(e);
+                return std::ptr::null_mut();
+            }
+        }
+    }
+    let m = (!model.is_null() && model_len > 0).then(|| unsafe { std::slice::from_raw_parts(model, model_len) }.to_vec());
+    match LibraryBuilder::new(cfg, m) {
+        Ok(b) => Box::into_raw(Box::new(ReisBuilder(b))),
+        Err(e) => {
+            set_error(e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+fn add_prepared(b: &mut LibraryBuilder, prep: crate::library::Prepared, info_json: *const c_char, art: *const u8, art_len: usize) -> i32 {
+    let info = Json::parse(&cstr(info_json)).unwrap_or(Json::Obj(vec![]));
+    let name = info.get_str("name").unwrap_or("").to_string();
+    let label = info.get_str("label").unwrap_or("").to_string();
+    let file = info.get_str("file").unwrap_or("").to_string();
+    let meta = info.get("meta").and_then(|m| m.obj()).map(|o| o.to_vec()).unwrap_or_default();
+    let lyrics = info.get_str("lyrics").map(String::from);
+    let art = (!art.is_null() && art_len > 0).then(|| unsafe { std::slice::from_raw_parts(art, art_len) }.to_vec());
+    b.add_parts(&name, &label, &file, &meta, lyrics.as_deref(), art, prep) as i32
+}
+
+/// Add one reference from interleaved 16-bit PCM. `info_json`: {"name","label","file","meta":{…},"lyrics":"LRC text"}.
+/// `art`: optional small image (JPEG/WebP/PNG). Returns the reference id, or -1.
+#[no_mangle]
+pub extern "C" fn reis_builder_add_i16(b: *mut ReisBuilder, pcm: *const i16, frames: u32, channels: u32, rate: u32, info_json: *const c_char, art: *const u8, art_len: usize) -> i32 {
+    let b = &mut unsafe { &mut *b }.0;
+    let ch = channels.max(1) as usize;
+    if pcm.is_null() || frames == 0 || rate == 0 {
+        set_error("empty audio");
+        return -1;
+    }
+    let s = unsafe { std::slice::from_raw_parts(pcm, frames as usize * ch) };
+    let mono: Vec<f32> = s.chunks_exact(ch).map(|f| f.iter().map(|&v| v as f32).sum::<f32>() / (ch as f32 * 32768.0)).collect();
+    if mono.len() < rate as usize / 4 {
+        set_error("shorter than 0.25 s");
+        return -1;
+    }
+    let prep = b.prepare(&mono, rate);
+    add_prepared(b, prep, info_json, art, art_len)
+}
+
+/// Add one reference from a file path (WAV natively; other formats need ffmpeg — desktop only).
+#[no_mangle]
+pub extern "C" fn reis_builder_add_file(b: *mut ReisBuilder, path: *const c_char, info_json: *const c_char, art: *const u8, art_len: usize) -> i32 {
+    let b = &mut unsafe { &mut *b }.0;
+    match b.prepare_file(std::path::Path::new(&cstr(path))) {
+        Ok(prep) => add_prepared(b, prep, info_json, art, art_len),
+        Err(e) => {
+            set_error(e);
+            -1
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn reis_builder_count(b: *const ReisBuilder) -> u32 {
+    unsafe { &*b }.0.len() as u32
+}
+
+/// Write the library (atomically: temp file + rename) and free the builder. 0 = ok.
+#[no_mangle]
+pub extern "C" fn reis_builder_finish(b: *mut ReisBuilder, out_path: *const c_char) -> i32 {
+    let b = unsafe { Box::from_raw(b) }.0;
+    if b.is_empty() {
+        set_error("no reference was added");
+        return -1;
+    }
+    let out = cstr(out_path);
+    let tmp = format!("{out}.part");
+    let bytes = b.finish();
+    match std::fs::write(&tmp, &bytes).and_then(|_| std::fs::rename(&tmp, &out)) {
+        Ok(()) => 0,
+        Err(e) => {
+            set_error(format!("{out}: {e}"));
+            -1
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn reis_builder_free(b: *mut ReisBuilder) {
+    if !b.is_null() {
+        unsafe { drop(Box::from_raw(b)) }
+    }
+}
