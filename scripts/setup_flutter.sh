@@ -10,7 +10,7 @@ rm -rf test   # generated widget test targets the template app
 M=android/app/src/main/AndroidManifest.xml
 if [ -f "$M" ]; then
   if ! grep -q RECORD_AUDIO "$M"; then
-    sed -i 's#<application#<uses-permission android:name="android.permission.RECORD_AUDIO"/>\n    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO"/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>\n    <application#' "$M"
+    sed -i 's#<application#<uses-permission android:name="android.permission.RECORD_AUDIO"/>\n    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO"/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>\n    <application#' "$M"
   fi
   # native audio helpers (MediaStore listing, MediaCodec decoding, artwork)
   KT=$(find android/app/src/main -name MainActivity.kt | head -1)

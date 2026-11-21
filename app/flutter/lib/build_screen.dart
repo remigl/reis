@@ -23,6 +23,7 @@ class _BuildScreenState extends State<BuildScreen> {
   final _category = TextEditingController(text: 'sons');
   LibraryKind _kind = LibraryKind.music;
   bool _augment = false;
+  bool _lyrics = false;
   bool _loading = false;
   String? _error;
   LibraryBuildJob? _job;
@@ -81,7 +82,8 @@ class _BuildScreenState extends State<BuildScreen> {
   Future<void> _build() async {
     final sources = _sources;
     if (sources.isEmpty) return;
-    final job = LibraryBuildJob(sources: sources, kind: _kind, outPath: widget.outPath, augmentSpeaker: _augment);
+    final job = LibraryBuildJob(
+        sources: sources, kind: _kind, outPath: widget.outPath, augmentSpeaker: _augment, downloadLyrics: _lyrics && _kind != LibraryKind.sounds);
     setState(() {
       _job = job;
       _error = null;
@@ -101,7 +103,8 @@ class _BuildScreenState extends State<BuildScreen> {
         context: context,
         builder: (c) => AlertDialog(
           title: const Text('Bibliothèque prête'),
-          content: Text('${r.added} sons ajoutés${r.failed > 0 ? ', ${r.failed} ignorés' : ''}.'
+          content: Text('${r.added} sons ajoutés${r.failed > 0 ? ', ${r.failed} ignorés' : ''}'
+              '${r.lyricsDownloaded > 0 ? ', paroles téléchargées pour ${r.lyricsDownloaded}' : ''}.'
               '${r.errors.isEmpty ? '' : '\n\n${r.errors.take(3).join('\n')}'}'),
           actions: [TextButton(onPressed: () => Navigator.pop(c), child: const Text('Écouter'))],
         ),
@@ -186,6 +189,15 @@ class _BuildScreenState extends State<BuildScreen> {
         },
         style: const TextStyle(color: Colors.white60),
       ),
+      if (_kind != LibraryKind.sounds)
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          value: _lyrics,
+          onChanged: (v) => setState(() => _lyrics = v),
+          title: const Text('Télécharger les paroles manquantes'),
+          subtitle: const Text('Paroles synchronisées depuis lrclib.net (Internet). Titre et artiste déduits des tags '
+              'ou du nom du fichier ; seuls ceux-ci et la durée sont envoyés.'),
+        ),
       if (_kind != LibraryKind.music)
         SwitchListTile(
           contentPadding: EdgeInsets.zero,

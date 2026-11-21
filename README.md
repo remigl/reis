@@ -41,7 +41,8 @@ Plus un filet de sécurité : les **527 classes AudioSet** du réseau
    ```
 4. **Ou directement sur le téléphone** : installe l'APK de la release, touche
    *Créer ma bibliothèque*, coche tes dossiers de musiques ou de sons. L'app
-   crée les empreintes elle-même, hors ligne.
+   crée les empreintes elle-même, hors ligne, et peut chercher les paroles
+   manquantes sur LRCLIB (seule fonction en ligne, facultative).
 
 ## Documentation
 

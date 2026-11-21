@@ -1,25 +1,21 @@
-**Reis v0.3.0** — l'app crée elle-même ta bibliothèque d'empreintes, **sur le téléphone**, à partir de tes musiques et de tes sons. Plus besoin d'ordinateur.
+**Reis v0.4.0** — paroles depuis Internet, dans l'app.
 
-### Dans l'app
-1. Premier lancement → **Créer ma bibliothèque** (ou, plus tard, bouton 🎵 « Bibliothèque »).
-2. Choisis ce que Reis doit reconnaître :
-   - **Musiques** : le morceau exact, sa position et ses paroles synchronisées (si un `.lrc` est à côté du fichier ou ajouté avec lui) ;
-   - **Types de sons** : le même genre de son, même un autre enregistrement ; chaque dossier devient une catégorie ;
-   - **Les deux**.
-3. Coche les dossiers de ton téléphone (ou ajoute des fichiers), puis **Créer les empreintes**. Tout se fait hors ligne.
+### Nouveau
+- **Chercher les paroles** pendant l'écoute : Reis déduit le titre et l'artiste (tags, ou nom du fichier comme `03 - Daft Punk - One More Time (Official Video).mp3`), interroge [LRCLIB](https://lrclib.net) et propose une liste. Pour chaque résultat, tu vois s'il est synchronisé ou texte seul et l'écart de durée. Touche un résultat pour un aperçu, puis choisis. Le choix est gardé sur le téléphone.
+- **À la création de la bibliothèque** : option *Télécharger les paroles manquantes* pour récupérer automatiquement les paroles synchronisées de même durée.
+- Les paroles non synchronisées s'affichent en texte simple.
 
-Tous les formats lisibles par Android sont acceptés (MP3, AAC/M4A, FLAC, OGG, Opus, WAV…).
+C'est la seule fonction en ligne, facultative. Seuls le titre, l'artiste, l'album et la durée sont envoyés, jamais l'audio.
+
+### Toujours là
+Création de la bibliothèque sur le téléphone (Musiques / Types de sons / Les deux), reconnaissance hors ligne, paroles synchronisées.
 
 ### Fichiers
 | fichier | contenu |
 |---|---|
-| `reis-v0.3.0-android.apk` | app Android 7.0+ (modèle neuronal inclus) |
-| `reis-v0.3.0-windows-x64.zip` | app Windows |
-| `reis-cli-v0.3.0-…` | outil `reis` + modèles, pour construire de grosses bibliothèques sur ordinateur |
+| `reis-v0.4.0-android.apk` | app Android 7.0+ |
+| `reis-v0.4.0-windows-x64.zip` | app Windows |
+| `reis-cli-v0.4.0-…` | outil `reis` + modèles |
 | `mn10_as.rnm`, `mn04_as.rnm` | modèles EfficientAT (MIT) |
 
-### Limites
-- APK signé avec la clé de debug (installation manuelle).
-- Fonction jamais testée sur un vrai téléphone : merci de remonter les problèmes.
-- Paroles : seulement les `.lrc` lisibles par l'app (choisis-les avec les sons dans « Ajouter des fichiers » si elles ne sont pas trouvées automatiquement).
-- La bibliothèque est reconstruite entièrement à chaque fois (pas encore d'ajout incrémental).
+Limites : APK signé avec la clé de debug ; jamais testé sur un vrai téléphone.

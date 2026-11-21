@@ -9,6 +9,8 @@ import 'package:path_provider/path_provider.dart';
 
 import 'build_screen.dart';
 import 'engine_service.dart';
+import 'lyrics_online.dart';
+import 'lyrics_search.dart';
 import 'lyrics_view.dart';
 import 'reis_ffi.dart';
 import 'settings.dart';
@@ -185,11 +187,16 @@ class _HomeScreenState extends State<HomeScreen> {
   late final EngineService _svc = EngineService(widget.catalogPath);
   final _prefs = LyricsPrefs();
   SongInfo? _song;
+  LyricsStore? _store; // lyrics chosen in the app (LRCLIB), override the library's
 
   @override
   void initState() {
     super.initState();
     _prefs.load();
+    LyricsStore.open().then((s) {
+      _store = s;
+      if (_song != null && mounted) setState(() => _song = _withStored(_cat.song(_song!.id)));
+    });
     _svc.addListener(_onState);
     _svc.start(); // mic starts immediately: no button to press
   }
@@ -197,11 +204,30 @@ class _HomeScreenState extends State<HomeScreen> {
   void _onState() {
     final id = _svc.state.song;
     if (id >= 0 && _song?.id != id) {
-      _song = _cat.song(id);
+      _song = _withStored(_cat.song(id));
     } else if (id < 0 && _song != null && _svc.state.phase == 0 && !_svc.state.uncertain) {
       _song = null;
     }
     setState(() {});
+  }
+
+  SongInfo _withStored(SongInfo s) {
+    final lrc = _store?.lrcFor(s);
+    if (lrc == null) return s;
+    final lines = parseLrc(lrc);
+    return lines.isEmpty ? s : SongInfo(s.id, s.title, s.artist, s.album, s.durationMs, s.artwork, lines);
+  }
+
+  Future<void> _searchLyrics() async {
+    final cur = _song;
+    if (cur == null) return;
+    final orig = _cat.song(cur.id);
+    final c = await Navigator.push<LyricsCandidate>(
+        context, MaterialPageRoute(builder: (_) => LyricsSearchPage(song: orig, fileName: orig.title)));
+    if (c == null) return;
+    _store ??= await LyricsStore.open();
+    await _store!.save(orig, c);
+    if (mounted) setState(() => _song = _withStored(orig));
   }
 
   @override
@@ -230,7 +256,7 @@ class _HomeScreenState extends State<HomeScreen> {
           else if (_song == null)
             ListeningView(level: s.levelDbfs)
           else
-            NowPlaying(song: _song!, svc: _svc, prefs: _prefs),
+            NowPlaying(song: _song!, svc: _svc, prefs: _prefs, onSearchLyrics: _searchLyrics),
           Positioned(
             right: 4,
             top: 4,
@@ -356,7 +382,8 @@ class NowPlaying extends StatelessWidget {
   final SongInfo song;
   final EngineService svc;
   final LyricsPrefs prefs;
-  const NowPlaying({super.key, required this.song, required this.svc, required this.prefs});
+  final VoidCallback onSearchLyrics;
+  const NowPlaying({super.key, required this.song, required this.svc, required this.prefs, required this.onSearchLyrics});
 
   @override
   Widget build(BuildContext context) {
@@ -378,10 +405,25 @@ class NowPlaying extends StatelessWidget {
                 Text(song.album, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white38, fontSize: 12)),
             ]),
           ),
+          IconButton(tooltip: 'Chercher les paroles', icon: const Icon(Icons.lyrics_outlined), onPressed: onSearchLyrics),
         ]),
       ),
       _Progress(svc: svc, durationMs: song.durationMs, paused: st.phase == 2, uncertain: st.uncertain),
-      Expanded(child: LyricsView(key: ValueKey(song.id), lines: song.lyrics, position: () => svc.positionMs, prefs: prefs)),
+      Expanded(
+        child: song.lyrics.isEmpty
+            ? Center(
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  const Text('Pas de paroles pour ce morceau', style: TextStyle(color: Colors.white54)),
+                  const SizedBox(height: 12),
+                  FilledButton.icon(onPressed: onSearchLyrics, icon: const Icon(Icons.download), label: const Text('Chercher les paroles')),
+                ]),
+              )
+            : LyricsView(
+                key: ValueKey('${song.id}:${song.lyrics.length}:${song.lyrics.first.tMs}:${song.lyrics.first.text}'),
+                lines: song.lyrics,
+                position: () => svc.positionMs,
+                prefs: prefs),
+      ),
     ]);
   }
 }

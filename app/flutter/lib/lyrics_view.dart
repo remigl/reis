@@ -43,6 +43,7 @@ class _LyricsViewState extends State<LyricsView> with SingleTickerProviderStateM
   void initState() {
     super.initState();
     _ticker = createTicker((_) {
+      if (!_synced) return;
       final p = widget.position();
       final a = activeLineAt(widget.lines, p);
       final hasWords = widget.prefs.showWords && a >= 0 && widget.lines[a].words.isNotEmpty;
@@ -110,10 +111,28 @@ class _LyricsViewState extends State<LyricsView> with SingleTickerProviderStateM
     );
   }
 
+  bool get _synced => widget.lines.isNotEmpty && widget.lines.first.tMs >= 0;
+
   @override
   Widget build(BuildContext context) {
     if (widget.lines.isEmpty) {
       return Center(child: Text('Pas de paroles pour ce morceau', style: widget.prefs.style(active: false)));
+    }
+    if (!_synced) {
+      // plain lyrics (no timestamps): readable text, no highlighting
+      return ListenableBuilder(
+        listenable: widget.prefs,
+        builder: (context, _) => ListView(padding: const EdgeInsets.fromLTRB(24, 16, 24, 80), children: [
+          Text('Paroles non synchronisées', textAlign: widget.prefs.alignment, style: const TextStyle(color: Colors.white38, fontSize: 12)),
+          const SizedBox(height: 12),
+          for (final l in widget.lines)
+            Padding(
+              padding: EdgeInsets.symmetric(vertical: widget.prefs.lineSpacing / 4),
+              child: Text(l.text.isEmpty ? ' ' : l.text, textAlign: widget.prefs.alignment,
+                  style: widget.prefs.style(active: true).copyWith(fontSize: widget.prefs.fontSize * 0.8)),
+            ),
+        ]),
+      );
     }
     return ListenableBuilder(
       listenable: widget.prefs,

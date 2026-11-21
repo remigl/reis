@@ -42,6 +42,14 @@ apparie artiste/titre/durée (± 2 s) et écrit un `.lrc` à côté de chaque
 fichier. La bibliothèque produite est destinée à votre appareil. Pour un catalogue public, n'incluez que des paroles dont vous avez les
 droits (paroles libres, domaine public, accord d'éditeur).
 
+## Paroles téléchargées dans l'app
+
+L'app peut chercher des paroles sur l'API publique de LRCLIB (option
+désactivée par défaut). Elles sont stockées uniquement sur ton téléphone,
+dans la bibliothèque ou dans `lyrics.json`, pour ton usage personnel. Reis ne
+les republie nulle part. Seuls le titre, l'artiste, l'album et la durée sont
+envoyés.
+
 ## Conseil pratique
 
 Mets la licence et l'auteur de chaque son de référence dans son `.json`

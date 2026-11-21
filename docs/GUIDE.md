@@ -432,6 +432,33 @@ l'app. Tout reste sur le téléphone.
 Sur **Windows**, le même écran accepte des fichiers WAV, ou tous formats si
 ffmpeg est installé.
 
+### Paroles depuis Internet (facultatif)
+
+La seule fonction en ligne de Reis, désactivée par défaut, utilise
+[LRCLIB](https://lrclib.net), une base libre de paroles synchronisées.
+
+- **À la création** : active *Télécharger les paroles manquantes*. Pour chaque
+  musique sans `.lrc`, Reis déduit le titre et l'artiste puis prend les
+  paroles synchronisées de même durée (±2 s).
+- **Pendant l'écoute** : bouton *Chercher les paroles* (icône paroles en haut,
+  ou au centre quand il n'y en a pas). Titre et artiste sont pré-remplis et
+  modifiables ; la liste indique pour chaque résultat s'il est synchronisé ou
+  texte seul et l'écart de durée avec ton morceau. Touche un résultat pour
+  voir un aperçu, puis *Utiliser ces paroles*. Le choix est gardé sur le
+  téléphone et survit à une reconstruction de la bibliothèque.
+
+Titre et artiste viennent des tags du fichier. S'ils manquent, Reis les
+déduit du nom : `03 - Daft Punk - One More Time (Official Video).mp3` donne
+« Daft Punk » / « One More Time », et `Daft_Punk-One_More_Time.flac` aussi.
+Les mentions du type « (Clip officiel) », « [HD] », « (Radio Edit) » ou
+« feat. … » sont retirées. Un nom d'enregistrement comme
+`AUD-20251102-WA0003` ne donne aucun artiste inventé.
+
+Seuls le titre, l'artiste, l'album et la durée sont envoyés à lrclib.net,
+jamais l'audio. Les requêtes sont envoyées une par une, au rythme demandé par
+LRCLIB. Les paroles restent la propriété de leurs auteurs : elles servent à
+ton usage personnel sur ton téléphone (voir [DATA_LICENSES.md](DATA_LICENSES.md)).
+
 ### Importer une bibliothèque construite sur ordinateur
 
 Pour de très grosses bibliothèques, ou pour ajouter des paroles LRCLIB :

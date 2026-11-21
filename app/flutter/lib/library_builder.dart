@@ -12,6 +12,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
 
+import 'lyrics_online.dart';
 import 'reis_ffi.dart';
 
 const _audio = MethodChannel('reis/audio');
@@ -110,9 +111,9 @@ class BuildProgress {
 
 class BuildResult {
   final String path;
-  final int added, failed;
+  final int added, failed, lyricsDownloaded;
   final List<String> errors;
-  const BuildResult(this.path, this.added, this.failed, this.errors);
+  const BuildResult(this.path, this.added, this.failed, this.errors, {this.lyricsDownloaded = 0});
 }
 
 /// Builds a library and reports progress. Cancel with [cancel].
@@ -121,10 +122,12 @@ class LibraryBuildJob {
   final LibraryKind kind;
   final String outPath;
   final bool augmentSpeaker;
+  /// fetch missing synced lyrics from LRCLIB (Internet) for music
+  final bool downloadLyrics;
   final _progress = StreamController<BuildProgress>.broadcast();
   bool _cancelled = false;
 
-  LibraryBuildJob({required this.sources, required this.kind, required this.outPath, this.augmentSpeaker = false});
+  LibraryBuildJob({required this.sources, required this.kind, required this.outPath, this.augmentSpeaker = false, this.downloadLyrics = false});
 
   Stream<BuildProgress> get progress => _progress.stream;
   void cancel() => _cancelled = true;
@@ -150,8 +153,22 @@ class LibraryBuildJob {
       throw StateError(init);
     }
     final sw = Stopwatch()..start();
-    var done = 0, failed = 0;
+    var done = 0, failed = 0, lyricsFound = 0, netFailures = 0;
     final errors = <String>[];
+    Future<void> fetchLyrics(SoundSource s) async {
+      if (!downloadLyrics || kind == LibraryKind.sounds || s.lyrics != null || netFailures >= 3) return;
+      try {
+        final g = guessTrack(title: s.title, artist: s.artist, fileName: (s.path ?? s.name).split('/').last);
+        final c = await LrcLib.best(g, durationS: s.durationMs > 0 ? s.durationMs / 1000 : null, album: s.album);
+        if (c?.synced != null) {
+          s.lyrics = c!.synced;
+          lyricsFound++;
+        }
+        netFailures = 0;
+      } on LrcLibException catch (e) {
+        if (++netFailures == 3) errors.add('Paroles : $e (téléchargement abandonné)');
+      }
+    }
     for (final s in sources) {
       if (_cancelled) break;
       _progress.add(BuildProgress(done, sources.length, failed, s.name, sw.elapsed));
@@ -159,6 +176,7 @@ class LibraryBuildJob {
         Uint8List? art;
         if (hasNativeDecoder) {
           s.lyrics ??= await _audio.invokeMethod<String>('readSidecar', {'path': s.path, 'ext': 'lrc'});
+          await fetchLyrics(s);
           if (kind != LibraryKind.sounds) {
             art = await _audio.invokeMethod<Uint8List>('thumbnail', {'source': s.source, 'size': 160});
           }
@@ -168,6 +186,7 @@ class LibraryBuildJob {
         } else {
           final lrc = File('${s.source.substring(0, s.source.lastIndexOf('.'))}.lrc');
           if (s.lyrics == null && lrc.existsSync()) s.lyrics = lrc.readAsStringSync();
+          await fetchLyrics(s);
           toWorker.send(['file', s.source, s.info(), art]);
         }
         final r = await next();
@@ -188,7 +207,7 @@ class LibraryBuildJob {
     fromWorker.close();
     await _progress.close();
     if (fin is String) throw StateError(fin);
-    return BuildResult(outPath, done - failed, failed, errors);
+    return BuildResult(outPath, done - failed, failed, errors, lyricsDownloaded: lyricsFound);
   }
 }
 
